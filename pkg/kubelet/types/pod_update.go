@@ -14,3 +14,12 @@ type PodUpdate struct {
 	Pods []*v1.Pod
 	Op   PodOperation
 }
+
+type SyncPodType string
+
+const (
+	SyncPodCreate SyncPodType = "SyncPodCreate"
+	SyncPodUpdate SyncPodType = "SyncPodUpdate"
+	SyncPodKill   SyncPodType = "SyncPodKill"
+	SyncPodSync   SyncPodType = "SyncPodSync"
+)

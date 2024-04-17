@@ -2,14 +2,13 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"github.com/google/uuid"
+	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubelet"
 	"minikubernetes/pkg/kubelet/types"
 	"os"
 	"os/signal"
-	"sort"
 	"sync"
 	"time"
 )
@@ -55,13 +54,13 @@ func (kls *KubeletServer) RunKubelet() {
 
 	// SIGINT到来，调用cancel()，并等待所有goroutine结束
 	<-signalCh
-	fmt.Println("Received interrupt signal, shutting down...")
+	log.Println("Received interrupt signal, shutting down...")
 	cancel()
 	wg.Wait()
 }
 
 func (kls *KubeletServer) createAndInitKubelet() (*kubelet.Kubelet, error) {
-	kl, err := kubelet.NewMainKubelet()
+	kl, err := kubelet.NewMainKubelet(kls.apiServerIP)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +81,7 @@ func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup
 			kls.updateLocalPods()
 			timer.Reset(SyncPeriod)
 		case <-ctx.Done():
-			fmt.Println("Shutting down api server watcher")
+			log.Println("Shutting down api server watcher")
 			return
 		}
 	}
@@ -127,11 +126,6 @@ func (kls *KubeletServer) updateLocalPods() {
 		}
 	}
 	kls.latestLocalPods = newLocalPods
-
-	// sort the pods by creation time
-	sort.Slice(kls.latestLocalPods, func(i, j int) bool {
-		return kls.latestLocalPods[i].CreationTimestamp.Before(kls.latestLocalPods[j].CreationTimestamp)
-	})
 }
 
 func getMockPods(oldPods []*v1.Pod) []*v1.Pod {
