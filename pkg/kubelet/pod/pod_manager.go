@@ -2,6 +2,7 @@ package pod
 
 import (
 	v1 "minikubernetes/pkg/api/v1"
+	"minikubernetes/pkg/kubelet/utils"
 	"sync"
 )
 
@@ -50,20 +51,16 @@ func (pm *podManager) GetPods() []*v1.Pod {
 	return pods
 }
 
-func getPodFullName(pod *v1.Pod) string {
-	return pod.ObjectMeta.Namespace + "/" + pod.ObjectMeta.Name
-}
-
 func (pm *podManager) UpdatePod(pod *v1.Pod) {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 	pm.podUidMap[pod.ObjectMeta.UID] = pod
-	pm.podFullNameMap[getPodFullName(pod)] = pod
+	pm.podFullNameMap[utils.GetPodFullName(pod)] = pod
 }
 
 func (pm *podManager) DeletePod(pod *v1.Pod) {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
 	delete(pm.podUidMap, pod.ObjectMeta.UID)
-	delete(pm.podFullNameMap, getPodFullName(pod))
+	delete(pm.podFullNameMap, utils.GetPodFullName(pod))
 }

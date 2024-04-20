@@ -6,6 +6,7 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubelet"
+	"minikubernetes/pkg/kubelet/client"
 	"minikubernetes/pkg/kubelet/types"
 	"os"
 	"os/signal"
@@ -14,28 +15,28 @@ import (
 )
 
 type KubeletServer struct {
-	apiServerIP     string
-	nodeId          string
+	kubeClient      client.KubeletClient
+	nodeName        string
 	latestLocalPods []*v1.Pod
 	updates         chan types.PodUpdate
 }
 
 func NewKubeletServer(apiServerIP string) (*KubeletServer, error) {
-	return &KubeletServer{
-		apiServerIP:     apiServerIP,
-		latestLocalPods: make([]*v1.Pod, 0),
-		updates:         make(chan types.PodUpdate),
-	}, nil
+	ks := &KubeletServer{}
+	ks.kubeClient = client.NewKubeletClient(apiServerIP)
+	ks.latestLocalPods = make([]*v1.Pod, 0)
+	ks.updates = make(chan types.PodUpdate)
+	return ks, nil
 }
 
 func (kls *KubeletServer) Run() {
 	// TODO 获取当前节点的nodeId
-	kls.nodeId = "node1"
+	kls.nodeName = "node1"
 	kls.RunKubelet()
 }
 
 func (kls *KubeletServer) RunKubelet() {
-	// context+waitgroup实现notify和join
+	// context+wait group实现notify和join
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
@@ -60,7 +61,7 @@ func (kls *KubeletServer) RunKubelet() {
 }
 
 func (kls *KubeletServer) createAndInitKubelet() (*kubelet.Kubelet, error) {
-	kl, err := kubelet.NewMainKubelet(kls.apiServerIP)
+	kl, err := kubelet.NewMainKubelet(kls.nodeName, kls.kubeClient)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +92,11 @@ func (kls *KubeletServer) updateLocalPods() {
 	// TODO: Get pods for current node from api server
 	// Mock
 	newLocalPods := getMockPods(kls.latestLocalPods)
+	// newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeId)
+	// if err != nil {
+	// 	log.Printf("Failed to get pods for node %s: %v", kls.nodeId, err)
+	// 	return
+	// }
 
 	// For now, we only allow additions and deletions
 	oldTable := make(map[v1.UID]*v1.Pod)
