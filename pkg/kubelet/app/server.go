@@ -31,11 +31,8 @@ func NewKubeletServer(apiServerIP string) (*KubeletServer, error) {
 
 func (kls *KubeletServer) Run() {
 	// TODO 获取当前节点的nodeId
-	kls.nodeName = "node1"
-	kls.RunKubelet()
-}
+	kls.nodeName = "node-0"
 
-func (kls *KubeletServer) RunKubelet() {
 	// context+wait group实现notify和join
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -46,11 +43,8 @@ func (kls *KubeletServer) RunKubelet() {
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt)
 
-	kl, err := kls.createAndInitKubelet()
-	if err != nil {
-		return
-	}
-	kls.startKubelet(ctx, &wg, kl)
+	kls.RunKubelet(ctx, &wg)
+
 	go kls.watchApiServer(ctx, &wg)
 
 	// SIGINT到来，调用cancel()，并等待所有goroutine结束
@@ -58,6 +52,14 @@ func (kls *KubeletServer) RunKubelet() {
 	log.Println("Received interrupt signal, shutting down...")
 	cancel()
 	wg.Wait()
+}
+
+func (kls *KubeletServer) RunKubelet(ctx context.Context, wg *sync.WaitGroup) {
+	kl, err := kls.createAndInitKubelet()
+	if err != nil {
+		return
+	}
+	kls.startKubelet(ctx, wg, kl)
 }
 
 func (kls *KubeletServer) createAndInitKubelet() (*kubelet.Kubelet, error) {
@@ -91,12 +93,12 @@ func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup
 func (kls *KubeletServer) updateLocalPods() {
 	// TODO: Get pods for current node from api server
 	// Mock
-	newLocalPods := getMockPods(kls.latestLocalPods)
-	// newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeId)
-	// if err != nil {
-	// 	log.Printf("Failed to get pods for node %s: %v", kls.nodeId, err)
-	// 	return
-	// }
+	// newLocalPods := getMockPods(kls.latestLocalPods)
+	newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
+	if err != nil {
+		log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
+		return
+	}
 
 	// For now, we only allow additions and deletions
 	oldTable := make(map[v1.UID]*v1.Pod)

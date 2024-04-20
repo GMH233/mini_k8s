@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	v1 "minikubernetes/pkg/api/v1"
 	"net/http"
@@ -21,8 +22,14 @@ func NewKubeletClient(apiServerIP string) KubeletClient {
 	}
 }
 
+type BaseResponse[T any] struct {
+	Data  T      `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
 func (kc *kubeletClient) GetPodsByNodeName(nodeName string) ([]*v1.Pod, error) {
-	resp, err := http.Get(kc.apiServerIP + "/pods")
+	url := fmt.Sprintf("http://%s:8001/api/v1/nodes/%s/pods", kc.apiServerIP, nodeName)
+	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -37,10 +44,15 @@ func (kc *kubeletClient) GetPodsByNodeName(nodeName string) ([]*v1.Pod, error) {
 	if err != nil {
 		return nil, err
 	}
-	var respPods []*v1.Pod
-	err = json.Unmarshal(body, &respPods)
+	var baseResponse BaseResponse[[]*v1.Pod]
+	err = json.Unmarshal(body, &baseResponse)
 	if err != nil {
 		return nil, err
 	}
-	return respPods, nil
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
+	}
+
+	return baseResponse.Data, nil
 }
