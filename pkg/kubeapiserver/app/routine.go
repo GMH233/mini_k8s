@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
@@ -247,17 +246,11 @@ func GetPodsByNodeHandler(con *gin.Context) {
 		pod := pod_hub[v]
 		all_pod_str = append(all_pod_str, pod)
 	}
-	js, err := json.Marshal(all_pod_str)
-	if err != nil {
-		log.Panicln("error in marshal all_pod_str")
-		con.JSON(http.StatusInternalServerError, gin.H{
-			"error": "error in marshal all_pod_str",
-		})
-		return
-	}
 
 	// then return all of them
-	con.JSON(http.StatusOK, gin.H{
-		"data": string(js),
-	})
+	con.JSON(http.StatusOK,
+		gin.H{
+			"data": all_pod_str,
+		},
+	)
 }
