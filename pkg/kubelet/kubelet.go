@@ -7,17 +7,19 @@ import (
 	"minikubernetes/pkg/kubelet/client"
 	"minikubernetes/pkg/kubelet/pleg"
 	kubepod "minikubernetes/pkg/kubelet/pod"
+	"minikubernetes/pkg/kubelet/runtime"
 	"minikubernetes/pkg/kubelet/types"
 	"minikubernetes/pkg/kubelet/utils"
 	"sync"
 )
 
 type Kubelet struct {
-	nodeName   string
-	podManger  kubepod.Manager
-	podWorkers PodWorkers
-	pleg       pleg.PodLifecycleEventGenerator
-	kubeClient client.KubeletClient
+	nodeName       string
+	podManger      kubepod.Manager
+	podWorkers     PodWorkers
+	pleg           pleg.PodLifecycleEventGenerator
+	kubeClient     client.KubeletClient
+	runtimeManager runtime.RuntimeManager
 }
 
 func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet, error) {
@@ -28,6 +30,7 @@ func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet,
 	kl.podWorkers = NewPodWorkers(kl)
 	kl.pleg = pleg.NewPLEG()
 	kl.kubeClient = kubeClient
+	kl.runtimeManager = runtime.NewRuntimeManager()
 
 	log.Println("Kubelet initialized.")
 	return kl, nil
@@ -110,6 +113,11 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType) {
 	switch syncPodType {
 	case types.SyncPodCreate:
 		log.Printf("Creating pod %v using container manager.\n", pod.Name)
+		err := kl.runtimeManager.AddPod(pod)
+		if err != nil {
+			return
+		}
+		log.Printf("Pod %v created.\n", pod.Name)
 	default:
 		log.Printf("SyncPodType %v is not implemented.\n", syncPodType)
 	}

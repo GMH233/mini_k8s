@@ -134,47 +134,40 @@ func (kls *KubeletServer) updateLocalPods() {
 	kls.latestLocalPods = newLocalPods
 }
 
+// 以下为fake数据
+var firstTime bool = true
+
 func getMockPods(oldPods []*v1.Pod) []*v1.Pod {
-	newPods := append(oldPods, &v1.Pod{
+	if !firstTime {
+		return oldPods
+	}
+	firstTime = false
+	conport := v1.ContainerPort{ContainerPort: 8080}
+	conport2 := v1.ContainerPort{ContainerPort: 8090}
+	contain := v1.Container{
+		Image:   "alpine:latest",
+		Command: []string{},
+		Ports:   []v1.ContainerPort{conport},
+	}
+	contain2 := v1.Container{
+		Image:   "alpine:latest",
+		Command: []string{},
+		Ports:   []v1.ContainerPort{conport2},
+	}
+	podSpec := v1.PodSpec{
+		Containers: []v1.Container{contain, contain2},
+	}
+	pod := &v1.Pod{
 		TypeMeta: v1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
-		},
-		ObjectMeta: v1.ObjectMeta{
-			Name:              "nginx",
+		}, ObjectMeta: v1.ObjectMeta{
+			Name:              "test-pod",
 			Namespace:         "default",
 			CreationTimestamp: time.Now(),
 			UID:               v1.UID(uuid.New().String()),
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:  "nginx",
-					Image: "nginx:latest",
-				},
-			},
-		},
-	})
-	newPods = append(newPods, &v1.Pod{
-		TypeMeta: v1.TypeMeta{
-			Kind:       "Pod",
-			APIVersion: "v1",
-		},
-		ObjectMeta: v1.ObjectMeta{
-			Name:              "busybox",
-			Namespace:         "default",
-			CreationTimestamp: time.Now(),
-			UID:               v1.UID(uuid.New().String()),
-		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:  "busybox",
-					Image: "busybox:latest",
-				},
-			},
-		},
-	})
-	newPods = newPods[1:]
-	return newPods
+		Spec: podSpec,
+	}
+	return []*v1.Pod{pod}
 }
