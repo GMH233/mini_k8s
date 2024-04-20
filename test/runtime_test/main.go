@@ -2,7 +2,7 @@ package main
 
 import (
 	v1 "minikubernetes/pkg/api/v1"
-	rt "minikubernetes/pkg/runtime"
+	rt "minikubernetes/pkg/kubelet/runtime"
 )
 
 func main() {
