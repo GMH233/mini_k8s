@@ -20,6 +20,7 @@ type Kubelet struct {
 	pleg           pleg.PodLifecycleEventGenerator
 	kubeClient     client.KubeletClient
 	runtimeManager runtime.RuntimeManager
+	cache          runtime.Cache
 }
 
 func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet, error) {
@@ -28,9 +29,10 @@ func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet,
 	kl.nodeName = nodeName
 	kl.podManger = kubepod.NewPodManager()
 	kl.podWorkers = NewPodWorkers(kl)
-	kl.pleg = pleg.NewPLEG()
 	kl.kubeClient = kubeClient
 	kl.runtimeManager = runtime.NewRuntimeManager()
+	kl.cache = runtime.NewCache()
+	kl.pleg = pleg.NewPLEG(kl.runtimeManager, kl.cache)
 
 	log.Println("Kubelet initialized.")
 	return kl, nil
@@ -48,8 +50,9 @@ func (kl *Kubelet) Run(ctx context.Context, wg *sync.WaitGroup, updates <-chan t
 func (kl *Kubelet) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-chan types.PodUpdate) {
 	defer wg.Done()
 	log.Println("Sync loop started.")
+	plegCh := kl.pleg.Watch()
 	for {
-		if !kl.syncLoopIteration(ctx, updates) {
+		if !kl.syncLoopIteration(ctx, updates, plegCh) {
 			break
 		}
 	}
@@ -57,9 +60,8 @@ func (kl *Kubelet) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-c
 	kl.DoCleanUp()
 }
 
-func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.PodUpdate) bool {
+func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.PodUpdate, plegCh <-chan *pleg.PodLifecycleEvent) bool {
 	// TODO 加入plegCh，syncCh等
-	plegCh := kl.pleg.Watch()
 	select {
 	case update, ok := <-configCh:
 		if !ok {
@@ -76,7 +78,7 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 			log.Printf("Type %v is not implemented.\n", update.Op)
 		}
 	case e := <-plegCh:
-		log.Printf("PLEG event: %v.\n", e.Type)
+		log.Printf("PLEG event: pod %v --- %v.\n", e.PodId, e.Type)
 	case <-ctx.Done():
 		// 人为停止
 		return false
