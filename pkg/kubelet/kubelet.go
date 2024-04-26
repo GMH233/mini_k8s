@@ -95,8 +95,8 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 func (kl *Kubelet) HandlePodAdditions(pods []*v1.Pod) {
 	log.Println("Handling pod additions...")
 	utils.SortPodsByCreationTime(pods)
-	for i, pod := range pods {
-		log.Printf("new pod %v: %v.\n", i, pod.Name)
+	for _, pod := range pods {
+		// log.Printf("new pod %v: %v.\n", i, pod.Name)
 		kl.podManger.UpdatePod(pod)
 		// TODO 检查pod是否可以被admit
 		kl.podWorkers.UpdatePod(pod, types.SyncPodCreate)
@@ -107,13 +107,15 @@ func (kl *Kubelet) HandlePodDeletions(pods []*v1.Pod) {
 	log.Println("Handling pod deletions...")
 	for i, pod := range pods {
 		log.Printf("deleted pod %v: %v.\n", i, pod.Name)
+		kl.podManger.DeletePod(pod)
+		kl.podWorkers.UpdatePod(pod, types.SyncPodKill)
 	}
 }
 
 func (kl *Kubelet) HandlePodLifecycleEvent(pods []*v1.Pod) {
 	log.Println("Handling pod lifecycle events...")
-	for i, pod := range pods {
-		log.Printf("pod %v: %v.\n", i, pod.Name)
+	for _, pod := range pods {
+		//log.Printf("pod %v: %v.\n", i, pod.Name)
 		kl.podWorkers.UpdatePod(pod, types.SyncPodSync)
 	}
 }
@@ -151,6 +153,14 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 			return
 		}
 		log.Printf("Pod %v synced. Phase: %v\n", pod.Name, apiStatus.Phase)
+	case types.SyncPodKill:
+		log.Printf("Killing pod %v\n", pod.Name)
+		// err := kl.runtimeManager.KillPod(pod)
+		// if err != nil {
+		// 	log.Printf("Failed to kill pod %v: %v\n", pod.Name, err)
+		// 	return
+		// }
+		log.Printf("Pod %v killed.\n", pod.Name)
 	default:
 		log.Printf("SyncPodType %v is not implemented.\n", syncPodType)
 	}

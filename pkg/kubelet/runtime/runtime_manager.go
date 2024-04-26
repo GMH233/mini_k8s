@@ -158,6 +158,7 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 	label := make(map[string]string)
 	label["PodID"] = string(PodID)
 	label["PodName"] = PodName
+	label["PauseType"] = "pause"
 	label["Name"] = PodName + ":PauseContainer"
 	label["PodNamespace"] = PodNameSpace
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
@@ -323,13 +324,16 @@ func (rm *runtimeManager) getAllContainers() ([]types.Container, error) {
 	if err != nil {
 		panic(err)
 	}
+	var ret []types.Container
+	for _, container := range containers {
+		//fmt.Println("container's state" + container.State)
+		//fmt.Println("container's status" + container.Status)
+		if _, ok := container.Labels["PauseType"]; !ok {
+			ret = append(ret, container)
+		}
+	}
 
-	// for _, container := range containers {
-	// 	fmt.Println("container's state" + container.State)
-	// 	fmt.Println("container's status" + container.Status)
-	// }
-
-	return containers, nil
+	return ret, nil
 }
 
 func (rm *runtimeManager) checkContainerState(ct types.Container, ct_todo *Container) {
