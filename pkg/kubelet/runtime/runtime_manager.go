@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 
 	v1 "minikubernetes/pkg/api/v1"
@@ -16,9 +21,85 @@ import (
 
 type RuntimeManager interface {
 	AddPod(pod *v1.Pod) error
+	GetAllPods() ([]*Pod, error)
+	GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error)
 }
 
 type runtimeManager struct {
+}
+
+func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
+
+	containers, err := rm.getAllContainers()
+	if err != nil {
+		panic(err)
+	}
+	var ret []*Pod
+
+	for _, container := range containers {
+		flag := false
+		tempContainer := new(Container)
+		tempContainer.ID = container.ID
+		tempContainer.Image = container.Image
+		tempContainer.Name = container.Labels["Name"]
+		rm.checkContainerState(container, tempContainer)
+
+		podBelonged := container.Labels["PodName"]
+
+		for _, podexist := range ret {
+			if podexist.Name == podBelonged {
+				fmt.Println("yes " + podBelonged)
+				podexist.Containers = append(podexist.Containers, tempContainer)
+				flag = true
+				break
+			}
+		}
+		if !flag {
+			fmt.Println("no " + podBelonged)
+			tempPod := new(Pod)
+			tempPod.Name = podBelonged
+			tempPod.Namespace = container.Labels["PodNamespace"]
+			tempPod.Containers = append(tempPod.Containers, tempContainer)
+			ret = append(ret, tempPod)
+		}
+
+	}
+	return ret, nil
+}
+
+func (rm *runtimeManager) GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error) {
+	containers, err := rm.getPodContainers(PodName)
+	if err != nil {
+		panic(err)
+	}
+	return &PodStatus{
+		ID:                ID,
+		Name:              PodName,
+		Namespace:         PodSpace,
+		ContainerStatuses: containers,
+		TimeStamp:         time.Now(),
+	}, nil
+}
+
+func (rm *runtimeManager) getPodContainers(PodName string) ([]*ContainerStatus, error) {
+	containers, err := rm.getAllContainers()
+	if err != nil {
+		panic(err)
+	}
+	var ret []*ContainerStatus
+	for _, container := range containers {
+		tempContainer := new(ContainerStatus)
+		if container.Labels["PodName"] == PodName {
+			tempContainer.ID = container.ID
+			tempContainer.Image = container.Image
+			tempContainer.Name = container.Labels["Name"]
+			tempContainer.CreatedAt = time.Unix(container.Created, 0)
+			rm.checkContainerStatus(container, tempContainer)
+
+			ret = append(ret, tempContainer)
+		}
+	}
+	return ret, nil
 }
 
 func NewRuntimeManager() RuntimeManager {
@@ -28,14 +109,14 @@ func NewRuntimeManager() RuntimeManager {
 
 func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 
-	PauseId, err := rm.CreatePauseContainer()
+	PauseId, err := rm.CreatePauseContainer(pod.Name, pod.Namespace)
 	if err != nil {
 		panic(err)
 	}
 
 	containerList := pod.Spec.Containers
 	for _, container := range containerList {
-		_, err := rm.createContainer(&container, PauseId)
+		_, err := rm.createContainer(&container, PauseId, pod.Name, pod.Namespace)
 		if err != nil {
 			panic(err)
 		}
@@ -44,7 +125,7 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 	return nil
 }
 
-func (rm *runtimeManager) CreatePauseContainer() (string, error) {
+func (rm *runtimeManager) CreatePauseContainer(PodName string, PodNameSpace string) (string, error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -57,7 +138,7 @@ func (rm *runtimeManager) CreatePauseContainer() (string, error) {
 		panic(err)
 	}
 	if !exi {
-		fmt.Println("yes")
+		//fmt.Println("yes")
 		reader, err := cli.ImagePull(ctx, PauseContainerImage, image.PullOptions{})
 		if err != nil {
 			panic(err)
@@ -65,12 +146,16 @@ func (rm *runtimeManager) CreatePauseContainer() (string, error) {
 		defer reader.Close()
 		io.Copy(os.Stdout, reader)
 	} else {
-		fmt.Println("already exist")
+		//fmt.Println("already exist")
 	}
-
+	label := make(map[string]string)
+	label["PodName"] = PodName
+	label["Name"] = PodName + ":PauseContainer"
+	label["PodNamespace"] = PodNameSpace
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: PauseContainerImage,
-		Tty:   false,
+		Image:  PauseContainerImage,
+		Tty:    false,
+		Labels: label,
 		//ExposedPorts: exposedPortSet,
 	}, nil, nil, nil, "")
 	if err != nil {
@@ -84,7 +169,7 @@ func (rm *runtimeManager) CreatePauseContainer() (string, error) {
 	return resp.ID, nil
 }
 
-func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string) (string, error) {
+func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodName string, PodNameSpace string) (string, error) {
 	repotag := ct.Image
 	cmd := ct.Command
 	ctx := context.Background()
@@ -99,7 +184,7 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string) (str
 		panic(err)
 	}
 	if !exi {
-		fmt.Println("yes")
+		//fmt.Println("yes")
 		reader, err := cli.ImagePull(ctx, "docker.io/library/"+repotag, image.PullOptions{})
 		if err != nil {
 			panic(err)
@@ -107,7 +192,7 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string) (str
 		defer reader.Close()
 		io.Copy(os.Stdout, reader)
 	} else {
-		fmt.Println("already exist")
+		//fmt.Println("already exist")
 	}
 
 	ports := ct.Ports
@@ -115,10 +200,10 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string) (str
 	portKeys := make(map[string]struct{})
 
 	for _, num := range ports {
-		fmt.Println(num.ContainerPort)
+		//fmt.Println(num.ContainerPort)
 
 		key := fmt.Sprint(num.ContainerPort) + "/tcp"
-		fmt.Println(key)
+		//fmt.Println(key)
 		portKeys[key] = struct{}{}
 	}
 	for key := range portKeys {
@@ -126,11 +211,15 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string) (str
 	}
 
 	pauseRef := "container:" + PauseId
-
+	label := make(map[string]string)
+	label["PodName"] = PodName
+	label["Name"] = ct.Name
+	label["PodNamespace"] = PodNameSpace
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: repotag,
-		Cmd:   cmd,
-		Tty:   true,
+		Image:  repotag,
+		Cmd:    cmd,
+		Tty:    true,
+		Labels: label,
 		//ExposedPorts: exposedPortSet,
 	}, &container.HostConfig{
 		NetworkMode: container.NetworkMode(pauseRef),
@@ -162,12 +251,12 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string) (str
 	// case <-statusCh:
 	// }
 
-	// out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-	// if err != nil {
-	// 	panic(err)
-	// }
+	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
+	if err != nil {
+		panic(err)
+	}
 
-	// stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 	return resp.ID, nil
 }
 
@@ -180,10 +269,10 @@ func (rm *runtimeManager) checkImages(repotag string) (bool, error) {
 	defer cli.Close()
 	images, err := cli.ImageList(ctx, image.ListOptions{})
 	if err != nil {
-		fmt.Println("fail to get images", err)
+		//fmt.Println("fail to get images", err)
 		panic(err)
 	}
-	fmt.Println("Docker Images:")
+	//fmt.Println("Docker Images:")
 	for _, image := range images {
 		//fmt.Printf("ID: %s\n", image.ID)
 		//fmt.Printf("RepoTags: %v\n", image.RepoTags)
@@ -194,4 +283,91 @@ func (rm *runtimeManager) checkImages(repotag string) (bool, error) {
 		//fmt.Println("------------------------")
 	}
 	return false, nil
+}
+
+// func (rm *runtimeManager) getAllRunningContainers() ([]types.Container, error) {
+// 	ctx := context.Background()
+// 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer cli.Close()
+
+// 	containers, err := cli.ContainerList(ctx, container.ListOptions{})
+// 	if err != nil {
+// 		panic(err)
+// 	}
+
+// 	return containers, nil
+
+// }
+
+func (rm *runtimeManager) getAllContainers() ([]types.Container, error) {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		panic(err)
+	}
+
+	// for _, container := range containers {
+	// 	fmt.Println("container's state" + container.State)
+	// 	fmt.Println("container's status" + container.Status)
+	// }
+
+	return containers, nil
+}
+
+func (rm *runtimeManager) checkContainerState(ct types.Container, ct_todo *Container) {
+	state := ct.State
+	//status := ct.Status
+	if state == "exited" {
+		ct_todo.State = ContainerStateExited
+		return
+	}
+	if state == "running" {
+		ct_todo.State = ContainerStateRunning
+		return
+	}
+	if state == "created" {
+		ct_todo.State = ContainerStateCreated
+		return
+	}
+	ct_todo.State = ContainerStateUnknown
+}
+
+func (rm *runtimeManager) checkContainerStatus(ct types.Container, ct_todo *ContainerStatus) {
+	state := ct.State
+	status := ct.Status
+	if state == "exited" {
+		ct_todo.State = ContainerStateExited
+
+		left := strings.Index(status, "(")
+		if left == -1 {
+			return
+		}
+		right := strings.Index(status, ")")
+		if right == -1 {
+			return
+		}
+		strNumber := status[left+1 : right]
+		number, _ := strconv.Atoi(strNumber)
+
+		ct_todo.ExitCode = number
+		return
+	}
+	if state == "running" {
+		ct_todo.State = ContainerStateRunning
+		return
+	}
+	if state == "created" {
+		ct_todo.State = ContainerStateCreated
+		return
+	}
+	ct_todo.State = ContainerStateUnknown
 }
