@@ -55,6 +55,7 @@ const (
 const (
 	Default_Namespace = "default"
 	Default_Nodename  = "node-0"
+	Default_Podname   = "example-pod"
 )
 
 type kubeApiServer struct {
@@ -72,16 +73,22 @@ type KubeApiServer interface {
 
 // TODO add etcd handler
 
-var np_pod_map map[string][]v1.UID
+var np_pod_map map[string](map[string]v1.UID)
 var node_pod_map map[string][]v1.UID
+
+// 实际上,Podname和Poduid必须有绑定
+
 var pod_hub map[v1.UID]v1.Pod
 
 func (ser *kubeApiServer) init() {
-	// TODO
+	// TODO: 加入etcd client支持
 
 	// assume that node-0 already registered
 
-	np_pod_map = make(map[string][]v1.UID)
+	np_pod_map = make(map[string](map[string]v1.UID))
+	// 如果有新的namespace创建，记得初始化map
+	np_pod_map[Default_Namespace] = make(map[string]v1.UID)
+
 	node_pod_map = make(map[string][]v1.UID)
 	pod_hub = make(map[v1.UID]v1.Pod)
 
@@ -186,6 +193,10 @@ func AddPodHandler(con *gin.Context) {
 		log.Panicln("something is wrong when parsing Pod")
 		return
 	}
+	podname := pod.ObjectMeta.Name
+	if podname == "" {
+		podname = Default_Podname
+	}
 
 	pod.ObjectMeta.UID = (v1.UID)(uuid.NewUUID())
 
@@ -194,12 +205,17 @@ func AddPodHandler(con *gin.Context) {
 	pod.Status.Phase = v1.PodPending
 
 	/* fake store pod to:
-	1. namespace it belongs
-	2. node it belongs
+	1. namespace , store the binding of podname and uid
+	2. node , only uid
 	*/
 
 	// assume no collision
-	np_pod_map["default"] = append(np_pod_map["default"], pod.ObjectMeta.UID)
+	_, ok := np_pod_map["default"][podname]
+	if ok {
+		log.Panicln("pod name already exists!")
+		return
+	}
+	np_pod_map["default"][podname] = pod.ObjectMeta.UID
 	node_pod_map["node-0"] = append(node_pod_map["node-0"], pod.ObjectMeta.UID)
 	pod_hub[pod.ObjectMeta.UID] = pod
 
@@ -209,7 +225,8 @@ func AddPodHandler(con *gin.Context) {
 	})
 
 }
-func PutPodStatusHandler(con *gin.Context) {
+
+func UpdatePodHandler(con *gin.Context) {
 
 }
 func DeletePodHandler(con *gin.Context) {
@@ -217,11 +234,52 @@ func DeletePodHandler(con *gin.Context) {
 }
 
 func GetPodStatusHandler(con *gin.Context) {
+	// TODO: 获取新的PodStatus
+	log.Println("GetPodStatus")
+
+	// default here
+	np := con.Params.ByName("namespace")
+	pod_name := con.Params.ByName("podname")
+
+	pod_idx := np_pod_map[np][pod_name]
+	// assume pod_idx is in pod_hub
+	pod_status := pod_hub[pod_idx].Status
+
+	con.JSON(http.StatusOK, gin.H{
+		"data": pod_status,
+	})
 
 }
 
-func UpdatePodHandler(con *gin.Context) {
+func PutPodStatusHandler(con *gin.Context) {
+	// TODO: 更新PodStatus
+	log.Println("PutPodStatus")
 
+	np := con.Params.ByName("namespace")
+	pod_name := con.Params.ByName("podname")
+
+	// 去你的错误处理
+	var pod_status v1.PodStatus
+	err := con.ShouldBind(&pod_status)
+	if err != nil {
+		log.Panicln("something is wrong when parsing Pod")
+		return
+	}
+
+	pod_idx := np_pod_map[np][pod_name]
+	if pod_idx == "" {
+		log.Panicln("pod name does not exist in namespace")
+		return
+	}
+	log.Println(pod_idx)
+	// assume pod_idx is in pod_hub
+	tmp_pod := pod_hub[pod_idx]
+	tmp_pod.Status = pod_status
+	pod_hub[pod_idx] = tmp_pod
+
+	con.JSON(http.StatusOK, gin.H{
+		"message": "successfully updated pod status",
+	})
 }
 
 func GetPodsByNodeHandler(con *gin.Context) {
