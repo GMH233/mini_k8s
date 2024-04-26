@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -26,10 +27,12 @@ type RuntimeManager interface {
 }
 
 type runtimeManager struct {
+	lock sync.Mutex
 }
 
 func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
-
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
 	containers, err := rm.getAllContainers()
 	if err != nil {
 		panic(err)
@@ -48,18 +51,19 @@ func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
 
 		for _, podexist := range ret {
 			if podexist.Name == podBelonged {
-				fmt.Println("yes " + podBelonged)
+				//fmt.Println("yes " + podBelonged)
 				podexist.Containers = append(podexist.Containers, tempContainer)
 				flag = true
 				break
 			}
 		}
 		if !flag {
-			fmt.Println("no " + podBelonged)
+			//fmt.Println("no " + podBelonged)
 			tempPod := new(Pod)
 			tempPod.Name = podBelonged
 			tempPod.Namespace = container.Labels["PodNamespace"]
 			tempPod.Containers = append(tempPod.Containers, tempContainer)
+			tempPod.ID = v1.UID(container.Labels["PodID"])
 			ret = append(ret, tempPod)
 		}
 
@@ -68,6 +72,8 @@ func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
 }
 
 func (rm *runtimeManager) GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error) {
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
 	containers, err := rm.getPodContainers(PodName)
 	if err != nil {
 		panic(err)
@@ -108,15 +114,16 @@ func NewRuntimeManager() RuntimeManager {
 }
 
 func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
-
-	PauseId, err := rm.CreatePauseContainer(pod.Name, pod.Namespace)
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+	PauseId, err := rm.CreatePauseContainer(pod.UID, pod.Name, pod.Namespace)
 	if err != nil {
 		panic(err)
 	}
 
 	containerList := pod.Spec.Containers
 	for _, container := range containerList {
-		_, err := rm.createContainer(&container, PauseId, pod.Name, pod.Namespace)
+		_, err := rm.createContainer(&container, PauseId, pod.UID, pod.Name, pod.Namespace)
 		if err != nil {
 			panic(err)
 		}
@@ -125,7 +132,7 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 	return nil
 }
 
-func (rm *runtimeManager) CreatePauseContainer(PodName string, PodNameSpace string) (string, error) {
+func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, PodNameSpace string) (string, error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -149,6 +156,7 @@ func (rm *runtimeManager) CreatePauseContainer(PodName string, PodNameSpace stri
 		//fmt.Println("already exist")
 	}
 	label := make(map[string]string)
+	label["PodID"] = string(PodID)
 	label["PodName"] = PodName
 	label["Name"] = PodName + ":PauseContainer"
 	label["PodNamespace"] = PodNameSpace
@@ -169,7 +177,7 @@ func (rm *runtimeManager) CreatePauseContainer(PodName string, PodNameSpace stri
 	return resp.ID, nil
 }
 
-func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodName string, PodNameSpace string) (string, error) {
+func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodID v1.UID, PodName string, PodNameSpace string) (string, error) {
 	repotag := ct.Image
 	cmd := ct.Command
 	ctx := context.Background()
@@ -212,6 +220,7 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodN
 
 	pauseRef := "container:" + PauseId
 	label := make(map[string]string)
+	label["PodID"] = string(PodID)
 	label["PodName"] = PodName
 	label["Name"] = ct.Name
 	label["PodNamespace"] = PodNameSpace

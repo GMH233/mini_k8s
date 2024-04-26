@@ -51,7 +51,7 @@ func (pw *podWorkers) UpdatePod(pod *v1.Pod, syncPodType types.SyncPodType) {
 			log.Printf("Pod worker goroutine for pod %s does not exist.", pod.ObjectMeta.UID)
 			return
 		}
-		updates := make(chan UpdatePodOptions, 1)
+		updates := make(chan UpdatePodOptions, 10)
 		pw.podUpdates[pod.ObjectMeta.UID] = updates
 		go pw.workerLoop(updates)
 		updates <- UpdatePodOptions{
@@ -76,19 +76,16 @@ func (pw *podWorkers) workerLoop(updates <-chan UpdatePodOptions) {
 	log.Println("Pod worker started.")
 	var lastSyncTime time.Time
 	for update := range updates {
-		lastSyncTime = time.Now()
 		if update.SyncPodType == types.SyncPodCreate {
 			pw.podSyncer.SyncPod(update.Pod, update.SyncPodType, nil)
-			continue
-		}
-		if update.SyncPodType == types.SyncPodSync {
+		} else if update.SyncPodType == types.SyncPodSync {
 			status, err := pw.cache.GetNewerThan(update.Pod.ObjectMeta.UID, lastSyncTime)
 			if err != nil {
 				log.Printf("Failed to get pod status for pod %s: %v", update.Pod.ObjectMeta.UID, err)
 				continue
 			}
 			pw.podSyncer.SyncPod(update.Pod, update.SyncPodType, status)
-			continue
 		}
+		lastSyncTime = time.Now()
 	}
 }

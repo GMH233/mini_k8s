@@ -76,7 +76,7 @@ func (kls *KubeletServer) startKubelet(ctx context.Context, wg *sync.WaitGroup, 
 
 func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	SyncPeriod := 5 * time.Second
+	SyncPeriod := 7 * time.Second
 	timer := time.NewTimer(SyncPeriod)
 	for {
 		select {
@@ -93,12 +93,12 @@ func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup
 func (kls *KubeletServer) updateLocalPods() {
 	// TODO: Get pods for current node from api server
 	// Mock
-	// newLocalPods := getMockPods(kls.latestLocalPods)
-	newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
-	if err != nil {
-		log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
-		return
-	}
+	newLocalPods := getMockPods(kls.latestLocalPods)
+	//newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
+	//if err != nil {
+	//	log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
+	//	return
+	//}
 
 	// For now, we only allow additions and deletions
 	oldTable := make(map[v1.UID]*v1.Pod)
@@ -153,7 +153,7 @@ func getMockPods(oldPods []*v1.Pod) []*v1.Pod {
 	}
 	contain2 := v1.Container{
 		Image:   "alpine:latest",
-		Command: []string{},
+		Command: []string{"echo", "hello world"},
 		Ports:   []v1.ContainerPort{conport2},
 	}
 	podSpec := v1.PodSpec{

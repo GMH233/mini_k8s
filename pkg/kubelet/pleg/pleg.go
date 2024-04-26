@@ -80,6 +80,7 @@ func (p *pleg) Start() {
 			select {
 			case <-timer.C:
 				p.Relist()
+				timer.Reset(RelistPeriod)
 			case <-p.ctx.Done():
 				isStopped = true
 			}
@@ -99,12 +100,12 @@ func (p *pleg) Relist() {
 	ts := time.Now()
 
 	// 获取runtime pods
-	// pods, err := p.runtimeManager.GetPods()
-	// if err != nil {
-	// 	log.Printf("PLEG: Failed to get pods: %v", err)
-	// 	return
-	// }
-	var pods []*runtime.Pod
+	pods, err := p.runtimeManager.GetAllPods()
+	if err != nil {
+		log.Printf("PLEG: Failed to get pods: %v", err)
+		return
+	}
+	//var pods []*runtime.Pod
 	p.setCurrentPods(pods)
 
 	eventMap := make(map[v1.UID][]*PodLifecycleEvent)
@@ -265,9 +266,9 @@ func (p *pleg) updateCache(currentPod *runtime.Pod, pid v1.UID) (error, bool) {
 		return nil, true
 	}
 	ts := time.Now()
-	// status, err := p.runtimeManager.GetPodStatus(currentPod.ID, currentPod.Name, currentPod.Namespace)
-	var status *runtime.PodStatus
-	var err error
+	status, err := p.runtimeManager.GetPodStatus(currentPod.ID, currentPod.Name, currentPod.Namespace)
+	//var status *runtime.PodStatus
+	//var err error
 	// if err == nil {
 	// 源码这里为status保留了旧ip地址，暂时不知道为什么，先不管
 	// status.IPs = p.getPodIPs(pid, status)
