@@ -93,12 +93,12 @@ func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup
 func (kls *KubeletServer) updateLocalPods() {
 	// TODO: Get pods for current node from api server
 	// Mock
-	newLocalPods := getMockPods(kls.latestLocalPods)
-	//newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
-	//if err != nil {
-	//	log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
-	//	return
-	//}
+	// newLocalPods := getMockPods(kls.latestLocalPods)
+	newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
+	if err != nil {
+		log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
+		return
+	}
 
 	// For now, we only allow additions and deletions
 	oldTable := make(map[v1.UID]*v1.Pod)

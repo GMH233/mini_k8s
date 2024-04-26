@@ -145,7 +145,11 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 			log.Printf("Pod %v status is unknown.\n", pod.Name)
 			return
 		}
-		// kl.kubeClient.UpdatePodStatus(pod, apiStatus)
+		err := kl.kubeClient.UpdatePodStatus(pod, apiStatus)
+		if err != nil {
+			log.Printf("Failed to update pod %v status to api server: %v\n", pod.Name, err)
+			return
+		}
 		log.Printf("Pod %v synced. Phase: %v\n", pod.Name, apiStatus.Phase)
 	default:
 		log.Printf("SyncPodType %v is not implemented.\n", syncPodType)
