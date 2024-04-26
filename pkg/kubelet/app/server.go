@@ -76,7 +76,7 @@ func (kls *KubeletServer) startKubelet(ctx context.Context, wg *sync.WaitGroup, 
 
 func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	SyncPeriod := 5 * time.Second
+	SyncPeriod := 7 * time.Second
 	timer := time.NewTimer(SyncPeriod)
 	for {
 		select {
@@ -153,7 +153,7 @@ func getMockPods(oldPods []*v1.Pod) []*v1.Pod {
 	}
 	contain2 := v1.Container{
 		Image:   "alpine:latest",
-		Command: []string{},
+		Command: []string{"echo", "hello world"},
 		Ports:   []v1.ContainerPort{conport2},
 	}
 	podSpec := v1.PodSpec{
