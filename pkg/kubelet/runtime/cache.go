@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	v1 "minikubernetes/pkg/api/v1"
 	"sync"
 	"time"
@@ -42,7 +43,7 @@ func (c *cache) Get(id v1.UID) (*PodStatus, error) {
 	defer c.lock.RUnlock()
 	data, ok := c.pods[id]
 	if !ok {
-		return &PodStatus{ID: id}, nil
+		return nil, fmt.Errorf("cache: pod %v not found", id)
 	}
 	return data.status, data.err
 }
@@ -52,13 +53,15 @@ func (c *cache) GetNewerThan(id v1.UID, minTime time.Time) (*PodStatus, error) {
 	defer c.lock.RUnlock()
 	for {
 		data, ok := c.pods[id]
-		isGlobalNewer := c.timestamp != nil && c.timestamp.After(minTime)
+		isGlobalNewer := c.timestamp != nil && (c.timestamp.After(minTime) || c.timestamp.Equal(minTime))
 		if !ok && isGlobalNewer {
-			return &PodStatus{ID: id}, nil
+			// 病态，可能会因为一直没有pod死循环，直接退出
+			return nil, fmt.Errorf("cache: pod %v not found", id)
 		}
-		if ok && data.modified.After(minTime) {
+		if ok && (data.modified.After(minTime) || data.modified.Equal(minTime)) {
 			return data.status, data.err
 		}
+		// 可以期待之后会有更新
 		c.lock.RUnlock()
 		time.Sleep(1 * time.Second)
 		c.lock.RLock()
