@@ -155,11 +155,11 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 		log.Printf("Pod %v synced. Phase: %v\n", pod.Name, apiStatus.Phase)
 	case types.SyncPodKill:
 		log.Printf("Killing pod %v\n", pod.Name)
-		// err := kl.runtimeManager.KillPod(pod)
-		// if err != nil {
-		// 	log.Printf("Failed to kill pod %v: %v\n", pod.Name, err)
-		// 	return
-		// }
+		err := kl.runtimeManager.DeletePod(pod.UID)
+		if err != nil {
+			log.Printf("Failed to kill pod %v: %v\n", pod.Name, err)
+			return
+		}
 		log.Printf("Pod %v killed.\n", pod.Name)
 	default:
 		log.Printf("SyncPodType %v is not implemented.\n", syncPodType)

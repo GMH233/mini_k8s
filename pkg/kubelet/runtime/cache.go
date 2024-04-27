@@ -51,21 +51,29 @@ func (c *cache) Get(id v1.UID) (*PodStatus, error) {
 func (c *cache) GetNewerThan(id v1.UID, minTime time.Time) (*PodStatus, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	for {
+	maxRetry := 3
+	for i := 0; i < maxRetry; i++ {
 		data, ok := c.pods[id]
 		isGlobalNewer := c.timestamp != nil && (c.timestamp.After(minTime) || c.timestamp.Equal(minTime))
 		if !ok && isGlobalNewer {
-			// 病态，可能会因为一直没有pod死循环，直接退出
-			return nil, fmt.Errorf("cache: pod %v not found", id)
+			// should not be here
+			return nil, fmt.Errorf("cache: global timestamp is newer but pod %v not exist", id)
 		}
 		if ok && (data.modified.After(minTime) || data.modified.Equal(minTime)) {
 			return data.status, data.err
 		}
 		// 可以期待之后会有更新
 		c.lock.RUnlock()
+		if i == maxRetry-1 {
+			break
+		}
 		time.Sleep(1 * time.Second)
 		c.lock.RLock()
 	}
+	// BUGFIX: 一次Lifecycle可能包含多个容器事件，但一个pod只做一次update cache，
+	// 第一个事件被worker处理后，worker时间戳新于cache时间戳，后续事件处理时到这里全部阻塞
+	// 若cache后面不会被更新（例如pod long running），则会永久阻塞
+	return nil, fmt.Errorf("cache: pod %v newer than %v not found after %vs", id, minTime, maxRetry-1)
 }
 
 func (c *cache) Set(id v1.UID, status *PodStatus, err error, timestamp time.Time) (updated bool) {

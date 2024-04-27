@@ -93,12 +93,12 @@ func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup
 func (kls *KubeletServer) updateLocalPods() {
 	// TODO: Get pods for current node from api server
 	// Mock
-	// newLocalPods := getMockPods(kls.latestLocalPods)
-	newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
-	if err != nil {
-		log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
-		return
-	}
+	newLocalPods := getMockPods(kls.latestLocalPods)
+	//newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
+	//if err != nil {
+	//	log.Printf("Failed to get pods for node %s: %v", kls.nodeName, err)
+	//	return
+	//}
 
 	// For now, we only allow additions and deletions
 	oldTable := make(map[v1.UID]*v1.Pod)
@@ -138,12 +138,18 @@ func (kls *KubeletServer) updateLocalPods() {
 
 // 以下为fake数据
 var firstTime bool = true
+var secondTime bool = false
 
 func getMockPods(oldPods []*v1.Pod) []*v1.Pod {
-	if !firstTime {
+	if !firstTime && secondTime {
+		secondTime = false
+		return []*v1.Pod{}
+	}
+	if !firstTime && !secondTime {
 		return oldPods
 	}
 	firstTime = false
+	secondTime = true
 	conport := v1.ContainerPort{ContainerPort: 8080}
 	conport2 := v1.ContainerPort{ContainerPort: 8090}
 	contain := v1.Container{
