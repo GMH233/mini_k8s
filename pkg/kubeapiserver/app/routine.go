@@ -230,6 +230,29 @@ func UpdatePodHandler(con *gin.Context) {
 
 }
 func DeletePodHandler(con *gin.Context) {
+	log.Println("DeletePod")
+
+	np := con.Params.ByName("namespace")
+	pod_name := con.Params.ByName("podname")
+	// if pod_idx is in pod_hub
+	pod_idx := np_pod_map[np][pod_name]
+
+	// delete from namespace_pod_map
+	delete(pod_hub, pod_idx)
+
+	delete(np_pod_map[np], pod_name)
+
+	// also delete from node_pod_map
+	for i, v := range node_pod_map["node-0"] {
+		if v == pod_idx {
+			node_pod_map["node-0"] = append(node_pod_map["node-0"][:i], node_pod_map["node-0"][i+1:]...)
+			break
+		}
+	}
+
+	con.JSON(http.StatusOK, gin.H{
+		"message": "successfully deleted pod",
+	})
 
 }
 
