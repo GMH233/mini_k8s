@@ -29,6 +29,14 @@ const (
 // 暂时用string表示资源，动态解析
 type ResourceList map[ResourceName]string
 
+type RestartPolicy string
+
+const (
+	RestartPolicyAlways    RestartPolicy = "Always"
+	RestartPolicyOnFailure RestartPolicy = "OnFailure"
+	RestartPolicyNever     RestartPolicy = "Never"
+)
+
 type TypeMeta struct {
 	Kind       string `json:"kind,omitempty"`
 	APIVersion string `json:"apiVersion,omitempty"`
@@ -130,6 +138,8 @@ type PodSpec struct {
 	Volumes []Volume `json:"volumes,omitempty"`
 	// 容器声明
 	Containers []Container `json:"containers,omitempty"`
+	// 重启策略：仅由kubelet实现
+	RestartPolicy RestartPolicy `json:"restartPolicy,omitempty"`
 }
 
 type PodStatus struct {

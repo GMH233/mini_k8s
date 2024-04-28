@@ -24,6 +24,8 @@ type RuntimeManager interface {
 	AddPod(pod *v1.Pod) error
 	GetAllPods() ([]*Pod, error)
 	GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error)
+	DeletePod(ID v1.UID) error
+	RestartPod(pod *v1.Pod) error
 }
 
 type runtimeManager struct {
@@ -158,6 +160,7 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 	label := make(map[string]string)
 	label["PodID"] = string(PodID)
 	label["PodName"] = PodName
+	label["PauseType"] = "pause"
 	label["Name"] = PodName + ":PauseContainer"
 	label["PodNamespace"] = PodNameSpace
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
@@ -323,13 +326,16 @@ func (rm *runtimeManager) getAllContainers() ([]types.Container, error) {
 	if err != nil {
 		panic(err)
 	}
+	var ret []types.Container
+	for _, container := range containers {
+		//fmt.Println("container's state" + container.State)
+		//fmt.Println("container's status" + container.Status)
+		if _, ok := container.Labels["PauseType"]; !ok {
+			ret = append(ret, container)
+		}
+	}
 
-	// for _, container := range containers {
-	// 	fmt.Println("container's state" + container.State)
-	// 	fmt.Println("container's status" + container.Status)
-	// }
-
-	return containers, nil
+	return ret, nil
 }
 
 func (rm *runtimeManager) checkContainerState(ct types.Container, ct_todo *Container) {
@@ -379,4 +385,70 @@ func (rm *runtimeManager) checkContainerStatus(ct types.Container, ct_todo *Cont
 		return
 	}
 	ct_todo.State = ContainerStateUnknown
+}
+
+func (rm *runtimeManager) DeletePod(ID v1.UID) error {
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+	containers, err := rm.getAllContainersIncludingPause()
+	if err != nil {
+		panic(err)
+	}
+	for _, container := range containers {
+		if container.Labels["PodID"] == string(ID) {
+			err := rm.deleteContainer(container)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+	return nil
+}
+
+func (rm *runtimeManager) getAllContainersIncludingPause() ([]types.Container, error) {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		panic(err)
+	}
+
+	return containers, nil
+}
+
+func (rm *runtimeManager) deleteContainer(ct types.Container) error {
+	ctx := context.Background()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer cli.Close()
+	noWaitTimeout := 0
+	if ct.State == "running" {
+		if err := cli.ContainerStop(ctx, ct.ID, container.StopOptions{Timeout: &noWaitTimeout}); err != nil {
+			panic(err)
+		}
+	}
+	if err := cli.ContainerRemove(ctx, ct.ID, container.RemoveOptions{}); err != nil {
+		panic(err)
+	}
+
+	return nil
+}
+
+func (rm *runtimeManager) RestartPod(pod *v1.Pod) error {
+	err := rm.DeletePod(pod.UID)
+	if err != nil {
+		return err
+	}
+	err = rm.AddPod(pod)
+	if err != nil {
+		return err
+	}
+	return nil
 }

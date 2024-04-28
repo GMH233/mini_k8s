@@ -91,7 +91,6 @@ func (kls *KubeletServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup
 }
 
 func (kls *KubeletServer) updateLocalPods() {
-	// TODO: Get pods for current node from api server
 	// Mock
 	// newLocalPods := getMockPods(kls.latestLocalPods)
 	newLocalPods, err := kls.kubeClient.GetPodsByNodeName(kls.nodeName)
@@ -138,26 +137,35 @@ func (kls *KubeletServer) updateLocalPods() {
 
 // 以下为fake数据
 var firstTime bool = true
+var secondTime bool = false
 
 func getMockPods(oldPods []*v1.Pod) []*v1.Pod {
-	if !firstTime {
+	if !firstTime && secondTime {
+		secondTime = false
+		//return []*v1.Pod{}
+		return oldPods
+	}
+	if !firstTime && !secondTime {
 		return oldPods
 	}
 	firstTime = false
+	secondTime = true
 	conport := v1.ContainerPort{ContainerPort: 8080}
-	conport2 := v1.ContainerPort{ContainerPort: 8090}
+	//conport2 := v1.ContainerPort{ContainerPort: 8090}
 	contain := v1.Container{
 		Image:   "alpine:latest",
 		Command: []string{},
 		Ports:   []v1.ContainerPort{conport},
 	}
-	contain2 := v1.Container{
-		Image:   "alpine:latest",
-		Command: []string{"echo", "hello world"},
-		Ports:   []v1.ContainerPort{conport2},
-	}
+	//contain2 := v1.Container{
+	//	Image:   "alpine:latest",
+	//	Command: []string{"echo", "hello world"},
+	//	Ports:   []v1.ContainerPort{conport2},
+	//}
 	podSpec := v1.PodSpec{
-		Containers: []v1.Container{contain, contain2},
+		//Containers: []v1.Container{contain, contain2},
+		Containers:    []v1.Container{contain},
+		RestartPolicy: v1.RestartPolicyAlways,
 	}
 	pod := &v1.Pod{
 		TypeMeta: v1.TypeMeta{

@@ -18,8 +18,9 @@ type PodUpdate struct {
 type SyncPodType string
 
 const (
-	SyncPodCreate SyncPodType = "SyncPodCreate"
-	SyncPodUpdate SyncPodType = "SyncPodUpdate"
-	SyncPodKill   SyncPodType = "SyncPodKill"
-	SyncPodSync   SyncPodType = "SyncPodSync"
+	SyncPodCreate   SyncPodType = "SyncPodCreate"
+	SyncPodUpdate   SyncPodType = "SyncPodUpdate"
+	SyncPodKill     SyncPodType = "SyncPodKill"
+	SyncPodSync     SyncPodType = "SyncPodSync"
+	SyncPodRecreate SyncPodType = "SyncPodRecreate"
 )

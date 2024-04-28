@@ -46,6 +46,8 @@ func NewPodWorkers(podSyncer PodSyncer, cache runtime.Cache) PodWorkers {
 }
 
 func (pw *podWorkers) UpdatePod(pod *v1.Pod, syncPodType types.SyncPodType) {
+	pw.lock.Lock()
+	defer pw.lock.Unlock()
 	if updateCh, ok := pw.podUpdates[pod.ObjectMeta.UID]; !ok {
 		if syncPodType != types.SyncPodCreate {
 			log.Printf("Pod worker goroutine for pod %s does not exist.", pod.ObjectMeta.UID)
@@ -63,7 +65,7 @@ func (pw *podWorkers) UpdatePod(pod *v1.Pod, syncPodType types.SyncPodType) {
 			log.Printf("Pod worker goroutine for pod %s already exists.", pod.ObjectMeta.UID)
 			return
 		}
-		if syncPodType == types.SyncPodSync {
+		if syncPodType == types.SyncPodSync || syncPodType == types.SyncPodKill || syncPodType == types.SyncPodRecreate {
 			updateCh <- UpdatePodOptions{
 				SyncPodType: syncPodType,
 				Pod:         pod,
@@ -78,14 +80,23 @@ func (pw *podWorkers) workerLoop(updates <-chan UpdatePodOptions) {
 	for update := range updates {
 		if update.SyncPodType == types.SyncPodCreate {
 			pw.podSyncer.SyncPod(update.Pod, update.SyncPodType, nil)
-		} else if update.SyncPodType == types.SyncPodSync {
+		} else if update.SyncPodType == types.SyncPodSync || update.SyncPodType == types.SyncPodRecreate {
 			status, err := pw.cache.GetNewerThan(update.Pod.ObjectMeta.UID, lastSyncTime)
 			if err != nil {
 				log.Printf("Failed to get pod status for pod %s: %v", update.Pod.ObjectMeta.UID, err)
 				continue
 			}
 			pw.podSyncer.SyncPod(update.Pod, update.SyncPodType, status)
+		} else if update.SyncPodType == types.SyncPodKill {
+			pw.podSyncer.SyncPod(update.Pod, update.SyncPodType, nil)
+			pw.lock.Lock()
+			delete(pw.podUpdates, update.Pod.ObjectMeta.UID)
+			pw.lock.Unlock()
+			break
+		} else {
+			continue
 		}
 		lastSyncTime = time.Now()
 	}
+	log.Println("Pod worker stopped.")
 }
