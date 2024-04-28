@@ -50,16 +50,17 @@ func (c *cache) Get(id v1.UID) (*PodStatus, error) {
 
 func (c *cache) GetNewerThan(id v1.UID, minTime time.Time) (*PodStatus, error) {
 	c.lock.RLock()
-	defer c.lock.RUnlock()
 	maxRetry := 3
 	for i := 0; i < maxRetry; i++ {
 		data, ok := c.pods[id]
 		isGlobalNewer := c.timestamp != nil && (c.timestamp.After(minTime) || c.timestamp.Equal(minTime))
 		if !ok && isGlobalNewer {
 			// should not be here
+			c.lock.RUnlock()
 			return nil, fmt.Errorf("cache: global timestamp is newer but pod %v not exist", id)
 		}
 		if ok && (data.modified.After(minTime) || data.modified.Equal(minTime)) {
+			c.lock.RUnlock()
 			return data.status, data.err
 		}
 		// 可以期待之后会有更新

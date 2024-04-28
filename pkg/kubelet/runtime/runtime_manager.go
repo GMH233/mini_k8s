@@ -25,6 +25,7 @@ type RuntimeManager interface {
 	GetAllPods() ([]*Pod, error)
 	GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error)
 	DeletePod(ID v1.UID) error
+	RestartPod(pod *v1.Pod) error
 }
 
 type runtimeManager struct {
@@ -437,5 +438,17 @@ func (rm *runtimeManager) deleteContainer(ct types.Container) error {
 		panic(err)
 	}
 
+	return nil
+}
+
+func (rm *runtimeManager) RestartPod(pod *v1.Pod) error {
+	err := rm.DeletePod(pod.UID)
+	if err != nil {
+		return err
+	}
+	err = rm.AddPod(pod)
+	if err != nil {
+		return err
+	}
 	return nil
 }

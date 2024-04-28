@@ -65,7 +65,7 @@ func (pw *podWorkers) UpdatePod(pod *v1.Pod, syncPodType types.SyncPodType) {
 			log.Printf("Pod worker goroutine for pod %s already exists.", pod.ObjectMeta.UID)
 			return
 		}
-		if syncPodType == types.SyncPodSync || syncPodType == types.SyncPodKill {
+		if syncPodType == types.SyncPodSync || syncPodType == types.SyncPodKill || syncPodType == types.SyncPodRecreate {
 			updateCh <- UpdatePodOptions{
 				SyncPodType: syncPodType,
 				Pod:         pod,
@@ -80,7 +80,7 @@ func (pw *podWorkers) workerLoop(updates <-chan UpdatePodOptions) {
 	for update := range updates {
 		if update.SyncPodType == types.SyncPodCreate {
 			pw.podSyncer.SyncPod(update.Pod, update.SyncPodType, nil)
-		} else if update.SyncPodType == types.SyncPodSync {
+		} else if update.SyncPodType == types.SyncPodSync || update.SyncPodType == types.SyncPodRecreate {
 			status, err := pw.cache.GetNewerThan(update.Pod.ObjectMeta.UID, lastSyncTime)
 			if err != nil {
 				log.Printf("Failed to get pod status for pod %s: %v", update.Pod.ObjectMeta.UID, err)

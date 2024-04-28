@@ -84,7 +84,7 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 			log.Printf("Pod %v not found.\n", e.PodId)
 			return true
 		}
-		kl.HandlePodLifecycleEvent([]*v1.Pod{pod})
+		kl.HandlePodLifecycleEvent(pod, e)
 	case <-ctx.Done():
 		// 人为停止
 		return false
@@ -112,12 +112,20 @@ func (kl *Kubelet) HandlePodDeletions(pods []*v1.Pod) {
 	}
 }
 
-func (kl *Kubelet) HandlePodLifecycleEvent(pods []*v1.Pod) {
+func (kl *Kubelet) HandlePodLifecycleEvent(pod *v1.Pod, event *pleg.PodLifecycleEvent) {
 	log.Println("Handling pod lifecycle events...")
-	for _, pod := range pods {
-		//log.Printf("pod %v: %v.\n", i, pod.Name)
-		kl.podWorkers.UpdatePod(pod, types.SyncPodSync)
+	//if event.Type == pleg.ContainerRemoved {
+	//	if pod.Spec.RestartPolicy == v1.RestartPolicyAlways || pod.Spec.RestartPolicy == v1.RestartPolicyOnFailure {
+	//		kl.podWorkers.UpdatePod(pod, types.SyncPodRecreate)
+	//		return
+	//	}
+	//}
+	if event.Type == pleg.ContainerDied && pod.Spec.RestartPolicy == v1.RestartPolicyAlways {
+		kl.podWorkers.UpdatePod(pod, types.SyncPodRecreate)
+		return
 	}
+	// TODO 实现OnFailure策略
+	kl.podWorkers.UpdatePod(pod, types.SyncPodSync)
 }
 
 func (kl *Kubelet) DoCleanUp() {
@@ -142,17 +150,18 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 			log.Printf("Pod %v status is nil.\n", pod.Name)
 			return
 		}
-		apiStatus := kl.computeApiStatus(podStatus)
+		apiStatus := kl.computeApiStatus(pod, podStatus)
 		if apiStatus == nil {
-			log.Printf("Pod %v status is unknown.\n", pod.Name)
+			// log.Printf("Pod %v status is unknown.\n", pod.Name)
 			return
 		}
 		err := kl.kubeClient.UpdatePodStatus(pod, apiStatus)
+		log.Printf("Pod %v syncing to apiserver. Phase: %v\n", pod.Name, apiStatus.Phase)
 		if err != nil {
 			log.Printf("Failed to update pod %v status to api server: %v\n", pod.Name, err)
 			return
 		}
-		log.Printf("Pod %v synced. Phase: %v\n", pod.Name, apiStatus.Phase)
+		log.Printf("Pod %v synced\n", pod.Name)
 	case types.SyncPodKill:
 		log.Printf("Killing pod %v\n", pod.Name)
 		err := kl.runtimeManager.DeletePod(pod.UID)
@@ -161,16 +170,29 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 			return
 		}
 		log.Printf("Pod %v killed.\n", pod.Name)
+	case types.SyncPodRecreate:
+		log.Printf("Recreating pod %v\n", pod.Name)
+		err := kl.runtimeManager.RestartPod(pod)
+		if err != nil {
+			log.Printf("Failed to recreate pod %v: %v\n", pod.Name, err)
+			return
+		}
+		log.Printf("Pod %v recreated.\n", pod.Name)
 	default:
 		log.Printf("SyncPodType %v is not implemented.\n", syncPodType)
 	}
 }
 
-func (kl *Kubelet) computeApiStatus(podStatus *runtime.PodStatus) *v1.PodStatus {
+func (kl *Kubelet) computeApiStatus(pod *v1.Pod, podStatus *runtime.PodStatus) *v1.PodStatus {
 	running := 0
 	exited := 0
 	succeeded := 0
 	failed := 0
+
+	if len(podStatus.ContainerStatuses) != len(pod.Spec.Containers) {
+		log.Printf("Pod %v has untracked container!\n", podStatus.Name)
+		return nil
+	}
 
 	for _, containerStatus := range podStatus.ContainerStatuses {
 		if containerStatus.State == runtime.ContainerStateRunning {
