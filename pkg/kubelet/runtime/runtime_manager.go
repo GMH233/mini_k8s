@@ -18,6 +18,7 @@ import (
 	"github.com/docker/go-connections/nat"
 
 	v1 "minikubernetes/pkg/api/v1"
+	nw "minikubernetes/pkg/kubelet/network"
 )
 
 type RuntimeManager interface {
@@ -30,6 +31,7 @@ type RuntimeManager interface {
 
 type runtimeManager struct {
 	lock sync.Mutex
+	IpMaps map[v1.UID]string
 }
 
 func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
@@ -82,6 +84,7 @@ func (rm *runtimeManager) GetPodStatus(ID v1.UID, PodName string, PodSpace strin
 	}
 	return &PodStatus{
 		ID:                ID,
+		IPs:               []string{rm.IpMaps[ID]},
 		Name:              PodName,
 		Namespace:         PodSpace,
 		ContainerStatuses: containers,
@@ -176,6 +179,12 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		panic(err)
 	}
+
+	ip,err := nw.Detach(resp.ID)
+	if err != nil {
+		panic(err)
+	}
+	rm.IpMaps[PodID] = ip
 
 	return resp.ID, nil
 }
@@ -417,6 +426,17 @@ func (rm *runtimeManager) getAllContainersIncludingPause() ([]types.Container, e
 	if err != nil {
 		panic(err)
 	}
+	for _, container := range containers {
+		//fmt.Println("container's state" + container.State)
+		//fmt.Println("container's status" + container.Status)
+		if _, ok := container.Labels["PauseType"]; !ok {
+			err := nw.Detach(container.ID)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+	
 
 	return containers, nil
 }
