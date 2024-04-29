@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"github.com/docker/docker/api/types/mount"
 	"io"
 	"os"
 	"strconv"
@@ -30,7 +31,7 @@ type RuntimeManager interface {
 }
 
 type runtimeManager struct {
-	lock sync.Mutex
+	lock  sync.Mutex
 	IpMap map[v1.UID]string
 }
 
@@ -115,6 +116,7 @@ func (rm *runtimeManager) getPodContainers(PodName string) ([]*ContainerStatus, 
 
 func NewRuntimeManager() RuntimeManager {
 	manager := &runtimeManager{}
+	manager.IpMap = make(map[v1.UID]string)
 	return manager
 }
 
@@ -128,7 +130,11 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 
 	containerList := pod.Spec.Containers
 	for _, container := range containerList {
-		_, err := rm.createContainer(&container, PauseId, pod.UID, pod.Name, pod.Namespace)
+		volumes, err := rm.createVolumeDir(pod)
+		if err != nil {
+			return err
+		}
+		_, err = rm.createContainer(&container, PauseId, pod.UID, pod.Name, pod.Namespace, volumes)
 		if err != nil {
 			panic(err)
 		}
@@ -180,7 +186,7 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 		panic(err)
 	}
 
-	ip,err := nw.Attach(resp.ID)
+	ip, err := nw.Attach(resp.ID)
 	if err != nil {
 		panic(err)
 	}
@@ -189,7 +195,7 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 	return resp.ID, nil
 }
 
-func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodID v1.UID, PodName string, PodNameSpace string) (string, error) {
+func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodID v1.UID, PodName string, PodNameSpace string, volumes map[string]string) (string, error) {
 	repotag := ct.Image
 	cmd := ct.Command
 	ctx := context.Background()
@@ -236,6 +242,20 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 	label["PodName"] = PodName
 	label["Name"] = ct.Name
 	label["PodNamespace"] = PodNameSpace
+
+	var mounts []mount.Mount
+	for _, volume := range ct.VolumeMounts {
+		if dir, ok := volumes[volume.Name]; !ok {
+			return "", fmt.Errorf("create container: volume %s not declared", volume.Name)
+		} else {
+			mounts = append(mounts, mount.Mount{
+				Type:   mount.TypeBind,
+				Source: dir,
+				Target: volume.MountPath,
+			})
+		}
+	}
+
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:  repotag,
 		Cmd:    cmd,
@@ -248,6 +268,7 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 		// PortBindings: option.PortBindings,
 		//IpcMode: container.IpcMode(pauseRef),
 		PidMode: container.PidMode(pauseRef),
+		Mounts:  mounts,
 		// VolumesFrom:  option.VolumesFrom,
 		// Links:        option.Links,
 		// Resources: container.Resources{
@@ -428,11 +449,11 @@ func (rm *runtimeManager) getAllContainersIncludingPause() ([]types.Container, e
 	}
 	for _, container := range containers {
 		if _, ok := container.Labels["PauseType"]; !ok {
-			err:=nw.Detach(container.ID)
+			err := nw.Detach(container.ID)
 			if err != nil {
 				panic(err)
 			}
-		
+
 		}
 	}
 
@@ -469,4 +490,34 @@ func (rm *runtimeManager) RestartPod(pod *v1.Pod) error {
 		return err
 	}
 	return nil
+}
+
+// volume在主机上的管理由kubelet负责
+func (rm *runtimeManager) createVolumeDir(pod *v1.Pod) (map[string]string, error) {
+	ret := make(map[string]string)
+	for _, volume := range pod.Spec.Volumes {
+		if volume.EmptyDir == nil && volume.HostPath == nil {
+			return nil, fmt.Errorf("create volume dir: volume %s has no source", volume.Name)
+		}
+		if volume.HostPath != nil && volume.EmptyDir != nil {
+			return nil, fmt.Errorf("create volume dir: volume %s cannot have both hostPath and emptyDir", volume.Name)
+		}
+		if volume.EmptyDir != nil {
+			dir := fmt.Sprintf("/tmp/minikubernetes/volumes/%s/%s", string(pod.UID), volume.Name)
+			// MkdirAll会创建所有父目录，若目标目录已存在也不会报错
+			err := os.MkdirAll(dir, os.ModePerm)
+			if err != nil {
+				return nil, fmt.Errorf("create volume dir: failed to create volume dir %s: %v", dir, err)
+			}
+			ret[volume.Name] = dir
+		} else {
+			dir := volume.HostPath.Path
+			err := os.MkdirAll(dir, os.ModePerm)
+			if err != nil {
+				return nil, fmt.Errorf("create volume dir: failed to create volume dir %s: %v", dir, err)
+			}
+			ret[volume.Name] = dir
+		}
+	}
+	return ret, nil
 }
