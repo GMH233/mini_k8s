@@ -212,7 +212,10 @@ func AddPodHandler(con *gin.Context) {
 	// assume no collision
 	_, ok := np_pod_map["default"][podname]
 	if ok {
-		log.Panicln("pod name already exists!")
+		log.Println("pod name already exists!")
+		con.JSON(http.StatusConflict, gin.H{
+			"error": "pod name already exists!",
+		})
 		return
 	}
 	np_pod_map["default"][podname] = pod.ObjectMeta.UID
@@ -235,7 +238,15 @@ func DeletePodHandler(con *gin.Context) {
 	np := con.Params.ByName("namespace")
 	pod_name := con.Params.ByName("podname")
 	// if pod_idx is in pod_hub
-	pod_idx := np_pod_map[np][pod_name]
+	pod_idx, ok := np_pod_map[np][pod_name]
+	if !ok {
+		log.Println("pod name does not exist in namespace")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod name does not exist in namespace",
+		})
+		return
+
+	}
 
 	// delete from namespace_pod_map
 	delete(pod_hub, pod_idx)
