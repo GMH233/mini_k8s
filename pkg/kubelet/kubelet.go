@@ -194,6 +194,11 @@ func (kl *Kubelet) computeApiStatus(pod *v1.Pod, podStatus *runtime.PodStatus) *
 		return nil
 	}
 
+	podIP := ""
+	if podStatus.IPs != nil && len(podStatus.IPs) > 0 {
+		podIP = podStatus.IPs[0]
+	}
+
 	for _, containerStatus := range podStatus.ContainerStatuses {
 		if containerStatus.State == runtime.ContainerStateRunning {
 			running++
@@ -209,15 +214,18 @@ func (kl *Kubelet) computeApiStatus(pod *v1.Pod, podStatus *runtime.PodStatus) *
 	if running != 0 {
 		return &v1.PodStatus{
 			Phase: v1.PodRunning,
+			PodIP: podIP,
 		}
 	} else if exited == len(podStatus.ContainerStatuses) {
 		if failed > 0 {
 			return &v1.PodStatus{
 				Phase: v1.PodFailed,
+				PodIP: podIP,
 			}
 		}
 		return &v1.PodStatus{
 			Phase: v1.PodSucceeded,
+			PodIP: podIP,
 		}
 	} else {
 		log.Printf("Pod %v status unknown!\n", podStatus.Name)
