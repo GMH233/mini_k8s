@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/docker/docker/api/types/mount"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -52,7 +53,10 @@ func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
 		tempContainer.Name = container.Labels["Name"]
 		rm.checkContainerState(container, tempContainer)
 
-		podBelonged := container.Labels["PodName"]
+		podBelonged, ok := container.Labels["PodName"]
+		if !ok {
+			continue
+		}
 
 		for _, podexist := range ret {
 			if podexist.Name == podBelonged {
@@ -83,14 +87,19 @@ func (rm *runtimeManager) GetPodStatus(ID v1.UID, PodName string, PodSpace strin
 	if err != nil {
 		panic(err)
 	}
-	return &PodStatus{
+	podStatus := &PodStatus{
 		ID:                ID,
-		IPs:               []string{rm.IpMap[ID]},
+		IPs:               nil,
 		Name:              PodName,
 		Namespace:         PodSpace,
 		ContainerStatuses: containers,
 		TimeStamp:         time.Now(),
-	}, nil
+	}
+	ip, ok := rm.IpMap[ID]
+	if ok {
+		podStatus.IPs = append(podStatus.IPs, ip)
+	}
+	return podStatus, nil
 }
 
 func (rm *runtimeManager) getPodContainers(PodName string) ([]*ContainerStatus, error) {
@@ -448,12 +457,13 @@ func (rm *runtimeManager) getAllContainersIncludingPause() ([]types.Container, e
 		panic(err)
 	}
 	for _, container := range containers {
-		if _, ok := container.Labels["PauseType"]; !ok {
+		if _, ok := container.Labels["PauseType"]; ok {
+			log.Printf("Container ID: %s\n", container.ID)
 			err := nw.Detach(container.ID)
 			if err != nil {
 				panic(err)
 			}
-
+			delete(rm.IpMap, v1.UID(container.Labels["PodID"]))
 		}
 	}
 
