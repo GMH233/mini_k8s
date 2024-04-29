@@ -8,8 +8,10 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "kubectl",
-	Short: "kubectl controls the Kubernetes control plane",
+	Short: "kubectl controls the Kubernetes cluster",
 }
+
+var apiUrl string = "http://10.119.12.123:8001/api/v1"
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
