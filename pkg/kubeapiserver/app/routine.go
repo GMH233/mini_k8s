@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
-	"minikubernetes/pkg/kubeapiserver/app/etcd"
+	"minikubernetes/pkg/kubeapiserver/etcd"
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 
