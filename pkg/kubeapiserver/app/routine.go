@@ -1,11 +1,14 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
+	"minikubernetes/pkg/kubeapiserver/app/etcd"
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
+
 	"net/http"
 	"time"
 
@@ -62,6 +65,7 @@ type kubeApiServer struct {
 	router    *gin.Engine
 	listen_ip string
 	port      int
+	store_cli etcd.Store
 }
 
 type KubeApiServer interface {
@@ -82,15 +86,24 @@ var pod_hub map[v1.UID]v1.Pod
 
 func (ser *kubeApiServer) init() {
 	// TODO: 加入etcd client支持
-
+	var err error
+	newStore, err := etcd.NewEtcdStore()
+	if err != nil {
+		log.Panicln("etcd store init failed")
+		return
+	}
+	ser.store_cli = newStore
 	// assume that node-0 already registered
 
-	np_pod_map = make(map[string](map[string]v1.UID))
-	// 如果有新的namespace创建，记得初始化map
-	np_pod_map[Default_Namespace] = make(map[string]v1.UID)
+	// TODO:(unnecessary) 检查etcdcli是否有效
 
-	node_pod_map = make(map[string][]v1.UID)
-	pod_hub = make(map[v1.UID]v1.Pod)
+	// 内存写法
+	// np_pod_map = make(map[string](map[string]v1.UID))
+	// // 如果有新的namespace创建，记得初始化map
+	// np_pod_map[Default_Namespace] = make(map[string]v1.UID)
+
+	// node_pod_map = make(map[string][]v1.UID)
+	// pod_hub = make(map[v1.UID]v1.Pod)
 
 }
 
@@ -105,6 +118,7 @@ func (ser *kubeApiServer) Run() {
 	log.Printf("at time: %d:%d:%d\n", hour, minute, second)
 
 	// fake init
+	log.Println("kubeApiServer init")
 	ser.init()
 
 	// exactly initialing
@@ -114,10 +128,11 @@ func (ser *kubeApiServer) Run() {
 	log.Printf("binding ip: %v, listening port: %v\n", ser.listen_ip, ser.port)
 	ser.router.Run(ser.listen_ip + ":" + fmt.Sprint(ser.port))
 
+	defer log.Printf("server stop")
 }
 
 func NewKubeApiServer() (KubeApiServer, error) {
-	// TODO: return an kubeapi server
+	// return an kubeapi server
 	return &kubeApiServer{
 		router:    gin.Default(),
 		listen_ip: "0.0.0.0",
@@ -144,13 +159,13 @@ func (ser *kubeApiServer) binder() {
 	ser.router.GET(All_pods_url, GetAllPodsHandler)
 	ser.router.GET(Namespace_Pods_url, GetPodsByNamespaceHandler)
 	ser.router.GET(Single_pod_url, GetPodHandler)
-	ser.router.POST(Namespace_Pods_url, AddPodHandler) // ** for single-pod testing
+	ser.router.POST(Namespace_Pods_url, ser.AddPodHandler) // ** for single-pod testing
 	ser.router.PUT(Single_pod_url, UpdatePodHandler)
-	ser.router.DELETE(Single_pod_url, DeletePodHandler)
-	ser.router.GET(Pod_status_url, GetPodStatusHandler)
-	ser.router.PUT(Pod_status_url, PutPodStatusHandler) // only modify the status of a single pod
+	ser.router.DELETE(Single_pod_url, ser.DeletePodHandler)
+	ser.router.GET(Pod_status_url, ser.GetPodStatusHandler)
+	ser.router.PUT(Pod_status_url, ser.PutPodStatusHandler) // only modify the status of a single pod
 
-	ser.router.GET(Node_pods_url, GetPodsByNodeHandler) // ** for single-pod testing
+	ser.router.GET(Node_pods_url, ser.GetPodsByNodeHandler) // ** for single-pod testing
 
 }
 
@@ -183,7 +198,7 @@ func GetPodsByNamespaceHandler(con *gin.Context) {
 func GetPodHandler(con *gin.Context) {
 
 }
-func AddPodHandler(con *gin.Context) {
+func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	// assign a pod to a node
 	log.Println("Adding a new pod")
 
@@ -193,9 +208,9 @@ func AddPodHandler(con *gin.Context) {
 		log.Panicln("something is wrong when parsing Pod")
 		return
 	}
-	podname := pod.ObjectMeta.Name
-	if podname == "" {
-		podname = Default_Podname
+	pod_name := pod.ObjectMeta.Name
+	if pod_name == "" {
+		pod_name = Default_Podname
 	}
 
 	pod.ObjectMeta.UID = (v1.UID)(uuid.NewUUID())
@@ -208,19 +223,70 @@ func AddPodHandler(con *gin.Context) {
 	1. namespace , store the binding of podname and uid
 	2. node , only uid
 	*/
+	// TODO: 加入shim 解析所谓的api格式到registry前缀的映射
+	// TODO: 加入一个keystr解析函数
+	// 现在可以简单的理解为将/api/v1/ 替换成/registry/
 
-	// assume no collision
-	_, ok := np_pod_map["default"][podname]
-	if ok {
-		log.Println("pod name already exists!")
+	prefix := "/registry"
+
+	// 全局用uid而不是podname来标识
+	all_pod_keystr := prefix + "/pods/" + string(pod.ObjectMeta.UID)
+
+	// namespace里面对应的是podname和uid的映射
+	namespace_pod_keystr := prefix + "/namespaces/" + Default_Namespace + "/pods/" + pod_name
+
+	// node里面对应的也是podname和uid的映射
+	node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
+
+	// 首先查看namespace里面是否已经存在
+	res, err := ser.store_cli.Get(namespace_pod_keystr)
+	if res != "" || err != nil {
+		log.Println("pod name already exists")
 		con.JSON(http.StatusConflict, gin.H{
-			"error": "pod name already exists!",
+			"error": "pod name already exists",
 		})
 		return
 	}
-	np_pod_map["default"][podname] = pod.ObjectMeta.UID
-	node_pod_map["node-0"] = append(node_pod_map["node-0"], pod.ObjectMeta.UID)
-	pod_hub[pod.ObjectMeta.UID] = pod
+	// 然后写入namespace_pod_map
+	err = ser.store_cli.Set(namespace_pod_keystr, string(pod.ObjectMeta.UID))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
+
+	// 然后写入node_pod_map
+	err = ser.store_cli.Set(node_pod_keystr, string(pod.ObjectMeta.UID))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
+
+	// 最后写入pod_hub
+	// JSON序列化pod
+	pod_str, err := json.Marshal(pod)
+
+	if err != nil {
+		log.Println("error in json marshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json marshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(all_pod_keystr, string(pod_str))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
 
 	con.JSON(http.StatusCreated, gin.H{
 		"message": "successfully created pod",
@@ -232,33 +298,75 @@ func AddPodHandler(con *gin.Context) {
 func UpdatePodHandler(con *gin.Context) {
 
 }
-func DeletePodHandler(con *gin.Context) {
+func (ser *kubeApiServer) DeletePodHandler(con *gin.Context) {
 	log.Println("DeletePod")
 
 	np := con.Params.ByName("namespace")
 	pod_name := con.Params.ByName("podname")
-	// if pod_idx is in pod_hub
-	pod_idx, ok := np_pod_map[np][pod_name]
-	if !ok {
+
+	prefix := "/registry"
+
+	namespace_pod_keystr := prefix + "/namespaces/" + np + "/pods/" + pod_name
+
+	node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
+
+	res, err := ser.store_cli.Get(namespace_pod_keystr)
+	// or change return type to DeleteResponse so there is no need to check Get result
+	if res == "" || err != nil {
 		log.Println("pod name does not exist in namespace")
 		con.JSON(http.StatusNotFound, gin.H{
 			"error": "pod name does not exist in namespace",
 		})
 		return
-
 	}
 
-	// delete from namespace_pod_map
-	delete(pod_hub, pod_idx)
+	pod_id := res
+	all_pod_keystr := prefix + "/pods/" + pod_id
 
-	delete(np_pod_map[np], pod_name)
+	err = ser.store_cli.Delete(namespace_pod_keystr)
+	if err != nil {
+		log.Println("error in deleting from etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in deleting from etcd",
+		})
+		return
+	}
 
-	// also delete from node_pod_map
-	for i, v := range node_pod_map["node-0"] {
-		if v == pod_idx {
-			node_pod_map["node-0"] = append(node_pod_map["node-0"][:i], node_pod_map["node-0"][i+1:]...)
-			break
-		}
+	res, err = ser.store_cli.Get(node_pod_keystr)
+	// or change return type to DeleteResponse so there is no need to check Get result
+	if res == "" || err != nil {
+		log.Println("pod name does not exist in node")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod name does not exist in node",
+		})
+		return
+	}
+
+	err = ser.store_cli.Delete(node_pod_keystr)
+	if err != nil {
+		log.Println("error in deleting from etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in deleting from etcd",
+		})
+		return
+	}
+
+	res, err = ser.store_cli.Get(all_pod_keystr)
+	if res == "" || err != nil {
+		log.Println("pod does not exist")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod does not exist",
+		})
+		return
+	}
+
+	err = ser.store_cli.Delete(all_pod_keystr)
+	if err != nil {
+		log.Println("error in deleting from etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in deleting from etcd",
+		})
+		return
 	}
 
 	con.JSON(http.StatusOK, gin.H{
@@ -267,7 +375,7 @@ func DeletePodHandler(con *gin.Context) {
 
 }
 
-func GetPodStatusHandler(con *gin.Context) {
+func (ser *kubeApiServer) GetPodStatusHandler(con *gin.Context) {
 	// TODO: 获取新的PodStatus
 	log.Println("GetPodStatus")
 
@@ -275,9 +383,42 @@ func GetPodStatusHandler(con *gin.Context) {
 	np := con.Params.ByName("namespace")
 	pod_name := con.Params.ByName("podname")
 
-	pod_idx := np_pod_map[np][pod_name]
-	// assume pod_idx is in pod_hub
-	pod_status := pod_hub[pod_idx].Status
+	prefix := "/registry"
+
+	namespace_pod_keystr := prefix + "/namespaces/" + np + "/pods/" + pod_name
+
+	res, err := ser.store_cli.Get(namespace_pod_keystr)
+	if res == "" || err != nil {
+		log.Println("pod name does not exist in namespace")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod name does not exist in namespace",
+		})
+		return
+	}
+
+	pod_id := res
+	all_pod_keystr := prefix + "/pods/" + pod_id
+
+	res, err = ser.store_cli.Get(all_pod_keystr)
+	if res == "" || err != nil {
+		log.Println("pod does not exist")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod does not exist",
+		})
+		return
+	}
+
+	var pod v1.Pod
+	err = json.Unmarshal([]byte(res), &pod)
+	if err != nil {
+		log.Println("error in json unmarshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json unmarshal",
+		})
+		return
+	}
+
+	pod_status := pod.Status
 
 	con.JSON(http.StatusOK, gin.H{
 		"data": pod_status,
@@ -285,14 +426,13 @@ func GetPodStatusHandler(con *gin.Context) {
 
 }
 
-func PutPodStatusHandler(con *gin.Context) {
+func (ser *kubeApiServer) PutPodStatusHandler(con *gin.Context) {
 	// TODO: 更新PodStatus
 	log.Println("PutPodStatus")
 
 	np := con.Params.ByName("namespace")
 	pod_name := con.Params.ByName("podname")
 
-	// 去你的错误处理
 	var pod_status v1.PodStatus
 	err := con.ShouldBind(&pod_status)
 	if err != nil {
@@ -300,23 +440,69 @@ func PutPodStatusHandler(con *gin.Context) {
 		return
 	}
 
-	pod_idx := np_pod_map[np][pod_name]
-	if pod_idx == "" {
-		log.Panicln("pod name does not exist in namespace")
+	prefix := "/registry"
+
+	namespace_pod_keystr := prefix + "/namespaces/" + np + "/pods/" + pod_name
+
+	res, err := ser.store_cli.Get(namespace_pod_keystr)
+
+	if res == "" || err != nil {
+		log.Println("pod name does not exist in namespace")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod name does not exist in namespace",
+		})
 		return
 	}
-	log.Println(pod_idx)
-	// assume pod_idx is in pod_hub
-	tmp_pod := pod_hub[pod_idx]
-	tmp_pod.Status = pod_status
-	pod_hub[pod_idx] = tmp_pod
+
+	pod_id := res
+	all_pod_keystr := prefix + "/pods/" + pod_id
+
+	res, err = ser.store_cli.Get(all_pod_keystr)
+	if res == "" || err != nil {
+		log.Println("pod does not exist")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod does not exist",
+		})
+		return
+	}
+
+	var pod v1.Pod
+
+	err = json.Unmarshal([]byte(res), &pod)
+	if err != nil {
+		log.Println("error in json unmarshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json unmarshal",
+		})
+		return
+	}
+
+	pod.Status = pod_status
+
+	pod_str, err := json.Marshal(pod)
+	if err != nil {
+		log.Println("error in json marshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json marshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(all_pod_keystr, string(pod_str))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
 
 	con.JSON(http.StatusOK, gin.H{
 		"message": "successfully updated pod status",
 	})
 }
 
-func GetPodsByNodeHandler(con *gin.Context) {
+func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 
 	// first parse nodename
 	log.Println("GetPodsByNode")
@@ -330,12 +516,47 @@ func GetPodsByNodeHandler(con *gin.Context) {
 		return
 	}
 	log.Println("getting info of node: %v", node_name)
-	// find all v1.Pod s in the pod_hub
+
 	all_pod_str := make([]v1.Pod, 0)
 
-	for _, v := range node_pod_map[node_name] {
+	prefix := "/registry"
 
-		pod := pod_hub[v]
+	node_pod_keystr := prefix + "/nodes/" + node_name + "/pods"
+
+	// 以这个前缀去搜索所有的pod
+	// 得调整接口 加一个GetSubKeysValues
+	res, err := ser.store_cli.GetSubKeysValues(node_pod_keystr)
+	//
+	if res == nil || err != nil {
+		log.Println("node does not exist")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "node does not exist",
+		})
+		return
+	}
+
+	//res返回的是pod的uid，回到etcd里面找到pod的信息
+	for _, v := range res {
+		pod_id := v
+		all_pod_keystr := prefix + "/pods/" + pod_id
+
+		res, err := ser.store_cli.Get(all_pod_keystr)
+		if res == "" || err != nil {
+			log.Println("pod does not exist")
+			con.JSON(http.StatusNotFound, gin.H{
+				"error": "pod does not exist",
+			})
+			return
+		}
+		var pod v1.Pod
+		err = json.Unmarshal([]byte(res), &pod)
+		if err != nil {
+			log.Println("error in json unmarshal")
+			con.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error in json unmarshal",
+			})
+			return
+		}
 		all_pod_str = append(all_pod_str, pod)
 	}
 
