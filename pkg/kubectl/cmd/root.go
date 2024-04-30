@@ -11,7 +11,7 @@ var rootCmd = &cobra.Command{
 	Short: "kubectl controls the Kubernetes cluster",
 }
 
-var apiUrl string = "http://10.119.12.123:8001/api/v1"
+var apiServerIP string = "10.119.12.123"
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
