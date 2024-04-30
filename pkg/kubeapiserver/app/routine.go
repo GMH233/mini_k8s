@@ -75,17 +75,7 @@ type KubeApiServer interface {
 /* Simulate etcd.
  */
 
-// TODO add etcd handler
-
-var np_pod_map map[string](map[string]v1.UID)
-var node_pod_map map[string][]v1.UID
-
-// 实际上,Podname和Poduid必须有绑定
-
-var pod_hub map[v1.UID]v1.Pod
-
 func (ser *kubeApiServer) init() {
-	// TODO: 加入etcd client支持
 	var err error
 	newStore, err := etcd.NewEtcdStore()
 	if err != nil {
@@ -96,14 +86,6 @@ func (ser *kubeApiServer) init() {
 	// assume that node-0 already registered
 
 	// TODO:(unnecessary) 检查etcdcli是否有效
-
-	// 内存写法
-	// np_pod_map = make(map[string](map[string]v1.UID))
-	// // 如果有新的namespace创建，记得初始化map
-	// np_pod_map[Default_Namespace] = make(map[string]v1.UID)
-
-	// node_pod_map = make(map[string][]v1.UID)
-	// pod_hub = make(map[v1.UID]v1.Pod)
 
 }
 
@@ -156,22 +138,23 @@ func (ser *kubeApiServer) binder() {
 	ser.router.GET(Node_status_url, GetNodeStatusHandler)
 	ser.router.PUT(Node_status_url, PutNodeStatusHandler) // only modify the status of node
 
-	ser.router.GET(All_pods_url, GetAllPodsHandler)
-	ser.router.GET(Namespace_Pods_url, GetPodsByNamespaceHandler)
-	ser.router.GET(Single_pod_url, GetPodHandler)
-	ser.router.POST(Namespace_Pods_url, ser.AddPodHandler) // ** for single-pod testing
+	ser.router.GET(All_pods_url, ser.GetAllPodsHandler)
+	ser.router.GET(Namespace_Pods_url, ser.GetPodsByNamespaceHandler)
+	ser.router.GET(Single_pod_url, ser.GetPodHandler)
+	ser.router.POST(Namespace_Pods_url, ser.AddPodHandler) // for single-pod testing
 	ser.router.PUT(Single_pod_url, UpdatePodHandler)
 	ser.router.DELETE(Single_pod_url, ser.DeletePodHandler)
 	ser.router.GET(Pod_status_url, ser.GetPodStatusHandler)
 	ser.router.PUT(Pod_status_url, ser.PutPodStatusHandler) // only modify the status of a single pod
 
-	ser.router.GET(Node_pods_url, ser.GetPodsByNodeHandler) // ** for single-pod testing
+	ser.router.GET(Node_pods_url, ser.GetPodsByNodeHandler) // for single-pod testing
 
 }
 
 // handlers (trivial)
 
 // Nodes have no namespace.
+// TODO: 增加Node支持
 func GetNodesHandler(con *gin.Context) {
 
 }
@@ -189,14 +172,147 @@ func PutNodeStatusHandler(con *gin.Context) {
 // For pods
 // We set namespace to "default" right now.
 
-func GetAllPodsHandler(con *gin.Context) {
+func (ser *kubeApiServer) GetAllPodsHandler(con *gin.Context) {
+	log.Println("GetAllPods")
+
+	all_pod_str := make([]v1.Pod, 0)
+
+	prefix := "/registry"
+
+	all_pod_keystr := prefix + "/pods"
+
+	res, err := ser.store_cli.GetSubKeysValues(all_pod_keystr)
+
+	if res == nil || len(res) == 0 || err != nil {
+		log.Println("no pod exists")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "no pod exists",
+		})
+		return
+	}
+	for _, v := range res {
+		var pod v1.Pod
+		err = json.Unmarshal([]byte(v), &pod)
+		if err != nil {
+			log.Println("error in json unmarshal")
+			con.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error in json unmarshal",
+			})
+			return
+		}
+		all_pod_str = append(all_pod_str, pod)
+	}
+
+	con.JSON(http.StatusOK,
+		gin.H{
+			"data": all_pod_str,
+		},
+	)
 
 }
-func GetPodsByNamespaceHandler(con *gin.Context) {
+func (ser *kubeApiServer) GetPodsByNamespaceHandler(con *gin.Context) {
+	log.Println("GetPodsByNamespace")
+
+	np := con.Params.ByName("namespace")
+	if np == "" {
+		log.Panicln("error in parsing namespace ")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "error in parsing namespace ",
+		})
+		return
+	}
+
+	all_pod_str := make([]v1.Pod, 0)
+
+	prefix := "/registry"
+
+	namespace_pod_keystr := prefix + "/namespaces/" + np + "/pods"
+
+	res, err := ser.store_cli.GetSubKeysValues(namespace_pod_keystr)
+
+	if res == nil || len(res) == 0 || err != nil {
+		log.Println("no pod exists")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "no pod exists",
+		})
+		return
+	}
+
+	for _, v := range res {
+		pod_id := v
+		all_pod_keystr := prefix + "/pods/" + pod_id
+
+		res, err := ser.store_cli.Get(all_pod_keystr)
+		if res == "" || err != nil {
+			log.Println("pod does not exist")
+			con.JSON(http.StatusNotFound, gin.H{
+				"error": "pod does not exist",
+			})
+			return
+		}
+		var pod v1.Pod
+		err = json.Unmarshal([]byte(res), &pod)
+		if err != nil {
+			log.Println("error in json unmarshal")
+			con.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error in json unmarshal",
+			})
+			return
+		}
+		all_pod_str = append(all_pod_str, pod)
+	}
+
+	con.JSON(http.StatusOK,
+		gin.H{
+			"data": all_pod_str,
+		},
+	)
 
 }
-func GetPodHandler(con *gin.Context) {
+func (ser *kubeApiServer) GetPodHandler(con *gin.Context) {
+	log.Println("GetPod")
 
+	np := con.Params.ByName("namespace")
+	pod_name := con.Params.ByName("podname")
+
+	prefix := "/registry"
+
+	namespace_pod_keystr := prefix + "/namespaces/" + np + "/pods/" + pod_name
+
+	res, err := ser.store_cli.Get(namespace_pod_keystr)
+	if res == "" || err != nil {
+		log.Println("pod name does not exist in namespace")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod name does not exist in namespace",
+		})
+		return
+	}
+
+	pod_id := res
+	all_pod_keystr := prefix + "/pods/" + pod_id
+
+	res, err = ser.store_cli.Get(all_pod_keystr)
+	if res == "" || err != nil {
+		log.Println("pod does not exist")
+		con.JSON(http.StatusNotFound, gin.H{
+			"error": "pod does not exist",
+		})
+		return
+	}
+
+	var pod v1.Pod
+	err = json.Unmarshal([]byte(res), &pod)
+	if err != nil {
+		log.Println("error in json unmarshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json unmarshal",
+		})
+		return
+	}
+
+	con.JSON(http.StatusOK, gin.H{
+		"data": pod,
+	})
 }
 func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	// assign a pod to a node
@@ -376,7 +492,7 @@ func (ser *kubeApiServer) DeletePodHandler(con *gin.Context) {
 }
 
 func (ser *kubeApiServer) GetPodStatusHandler(con *gin.Context) {
-	// TODO: 获取新的PodStatus
+
 	log.Println("GetPodStatus")
 
 	// default here
@@ -427,7 +543,6 @@ func (ser *kubeApiServer) GetPodStatusHandler(con *gin.Context) {
 }
 
 func (ser *kubeApiServer) PutPodStatusHandler(con *gin.Context) {
-	// TODO: 更新PodStatus
 	log.Println("PutPodStatus")
 
 	np := con.Params.ByName("namespace")
