@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: default
+spec:
+    containers:
+    - name: c1
+      image: alpine:latest
+    volumes:
+    - name: v1
+      emptyDir: {}
