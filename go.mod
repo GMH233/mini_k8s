@@ -3,11 +3,12 @@ module minikubernetes
 go 1.22
 
 require (
-	github.com/docker/docker v26.1.0+incompatible
+	github.com/docker/docker v26.0.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/google/uuid v1.6.0
 	github.com/moby/ipvs v1.1.0
 	github.com/spf13/cobra v1.8.0
+	github.com/vishvananda/netlink v1.1.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -34,7 +35,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
-	github.com/vishvananda/netlink v1.1.0 // indirect
 	github.com/vishvananda/netns v0.0.2 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.13 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.13 // indirect
