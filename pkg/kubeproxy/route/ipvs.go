@@ -6,16 +6,17 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"log"
+	v1 "minikubernetes/pkg/api/v1"
 	"net"
 	"os/exec"
 )
 
 type IPVS interface {
 	Init() error
-	AddVirtual(vip string, port uint16) error
-	AddRoute(vip string, vport uint16, rip string, rport uint16) error
-	DeleteVirtual(vip string, port uint16) error
-	DeleteRoute(vip string, vport uint16, rip string, rport uint16) error
+	AddVirtual(vip string, port uint16, protocol v1.Protocol) error
+	AddRoute(vip string, vport uint16, rip string, rport uint16, protocol v1.Protocol) error
+	DeleteVirtual(vip string, port uint16, protocol v1.Protocol) error
+	DeleteRoute(vip string, vport uint16, rip string, rport uint16, protocol v1.Protocol) error
 	Clear() error
 }
 
@@ -40,6 +41,15 @@ func createDummy() error {
 		},
 	}
 	err := netlink.LinkAdd(dummy)
+	return err
+}
+
+func deleteDummy() error {
+	link, err := netlink.LinkByName("minik8s-dummy")
+	if err != nil {
+		return err
+	}
+	err = netlink.LinkDel(link)
 	return err
 }
 
@@ -111,14 +121,14 @@ func (b *basicIPVS) Init() error {
 	return nil
 }
 
-func (b *basicIPVS) AddVirtual(vip string, port uint16) error {
+func (b *basicIPVS) AddVirtual(vip string, port uint16, protocol v1.Protocol) error {
 	addr := net.ParseIP(vip)
 	if addr == nil {
 		return fmt.Errorf("invalid ip address: %s", vip)
 	}
 	svc := &ipvs.Service{
 		Address:       addr,
-		Protocol:      unix.IPPROTO_TCP,
+		Protocol:      protocol2Unix(protocol),
 		Port:          port,
 		AddressFamily: unix.AF_INET,
 		SchedName:     ipvs.RoundRobin,
@@ -129,10 +139,17 @@ func (b *basicIPVS) AddVirtual(vip string, port uint16) error {
 	}
 	// ip addr add
 	err = addAddrToDummy(vip + "/32")
-	return err
+	if err != nil {
+		if err.Error() == "file exists" {
+			log.Println("ip addr already exists")
+		} else {
+			return err
+		}
+	}
+	return nil
 }
 
-func (b *basicIPVS) AddRoute(vip string, vport uint16, rip string, rport uint16) error {
+func (b *basicIPVS) AddRoute(vip string, vport uint16, rip string, rport uint16, protocol v1.Protocol) error {
 	vaddr := net.ParseIP(vip)
 	if vaddr == nil {
 		return fmt.Errorf("invalid ip address: %s", vip)
@@ -143,7 +160,7 @@ func (b *basicIPVS) AddRoute(vip string, vport uint16, rip string, rport uint16)
 	}
 	svc := &ipvs.Service{
 		Address:       vaddr,
-		Protocol:      unix.IPPROTO_TCP,
+		Protocol:      protocol2Unix(protocol),
 		Port:          vport,
 		AddressFamily: unix.AF_INET,
 	}
@@ -158,14 +175,14 @@ func (b *basicIPVS) AddRoute(vip string, vport uint16, rip string, rport uint16)
 	return err
 }
 
-func (b *basicIPVS) DeleteVirtual(vip string, port uint16) error {
+func (b *basicIPVS) DeleteVirtual(vip string, port uint16, protocol v1.Protocol) error {
 	addr := net.ParseIP(vip)
 	if addr == nil {
 		return fmt.Errorf("invalid ip address: %s", vip)
 	}
 	svc := &ipvs.Service{
 		Address:       addr,
-		Protocol:      unix.IPPROTO_TCP,
+		Protocol:      protocol2Unix(protocol),
 		Port:          port,
 		AddressFamily: unix.AF_INET,
 	}
@@ -177,7 +194,7 @@ func (b *basicIPVS) DeleteVirtual(vip string, port uint16) error {
 	return err
 }
 
-func (b *basicIPVS) DeleteRoute(vip string, vport uint16, rip string, rport uint16) error {
+func (b *basicIPVS) DeleteRoute(vip string, vport uint16, rip string, rport uint16, protocol v1.Protocol) error {
 	vaddr := net.ParseIP(vip)
 	if vaddr == nil {
 		return fmt.Errorf("invalid ip address: %s", vip)
@@ -188,7 +205,7 @@ func (b *basicIPVS) DeleteRoute(vip string, vport uint16, rip string, rport uint
 	}
 	svc := &ipvs.Service{
 		Address:       vaddr,
-		Protocol:      unix.IPPROTO_TCP,
+		Protocol:      protocol2Unix(protocol),
 		Port:          vport,
 		AddressFamily: unix.AF_INET,
 	}
@@ -202,5 +219,20 @@ func (b *basicIPVS) DeleteRoute(vip string, vport uint16, rip string, rport uint
 }
 
 func (b *basicIPVS) Clear() error {
-	return b.handle.Flush()
+	err := b.handle.Flush()
+	if err != nil {
+		return err
+	}
+	return deleteDummy()
+}
+
+func protocol2Unix(protocol v1.Protocol) uint16 {
+	switch protocol {
+	case v1.ProtocolTCP:
+		return unix.IPPROTO_TCP
+	case v1.ProtocolUDP:
+		return unix.IPPROTO_UDP
+	default:
+		return unix.IPPROTO_TCP
+	}
 }

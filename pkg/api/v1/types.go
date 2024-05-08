@@ -100,7 +100,8 @@ type Container struct {
 // ports:
 //   - containerPort: 80
 type ContainerPort struct {
-	ContainerPort int32 `json:"containerPort"`
+	ContainerPort int32    `json:"containerPort"`
+	Protocol      Protocol `json:"protocol,omitempty"`
 }
 
 // resources:
@@ -193,6 +194,6 @@ type ServicePort struct {
 type Protocol string
 
 const (
-	ProtocolTCP Protocol = "TCP"
-	ProtocolUDP Protocol = "UDP"
+	ProtocolTCP Protocol = "tcp"
+	ProtocolUDP Protocol = "udp"
 )

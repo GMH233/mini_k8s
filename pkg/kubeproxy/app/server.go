@@ -9,6 +9,7 @@ import (
 	"minikubernetes/pkg/kubeproxy/types"
 	"os"
 	"os/signal"
+	"sort"
 	"sync"
 	"time"
 )
@@ -99,10 +100,18 @@ func (ps *ProxyServer) updateService() {
 
 			var ports []types.EndpointPort
 			for _, port := range service.Spec.Ports {
-				ports = append(ports, types.EndpointPort{
-					Port:     port.Port,
-					Protocol: port.Protocol,
-				})
+			SearchLoop:
+				for _, container := range pod.Spec.Containers {
+					for _, containerPort := range container.Ports {
+						if containerPort.ContainerPort == port.TargetPort && containerPort.Protocol == port.Protocol {
+							ports = append(ports, types.EndpointPort{
+								Port:     port.TargetPort,
+								Protocol: port.Protocol,
+							})
+							break SearchLoop
+						}
+					}
+				}
 			}
 
 			endpoints = append(endpoints, &types.Endpoint{
@@ -194,12 +203,18 @@ func calculateDiff(oldItem, newItem *types.ServiceAndEndpoints) (bool, *types.Se
 		newIPMap[ep.IP] = ep.Ports
 	}
 	for ip, oldPorts := range oldIPMap {
-		if _, ok := newIPMap[ip]; !ok {
+		if newPorts, ok := newIPMap[ip]; !ok || !isEndpointPortsEqual(oldPorts, newPorts) {
 			diff = true
 			update.EndpointDeletions = append(update.EndpointDeletions, &types.Endpoint{
 				IP:    ip,
 				Ports: oldPorts,
 			})
+			if ok {
+				update.EndpointAdditions = append(update.EndpointAdditions, &types.Endpoint{
+					IP:    ip,
+					Ports: newPorts,
+				})
+			}
 		}
 	}
 	for ip, newPorts := range newIPMap {
@@ -222,6 +237,36 @@ func getMockPods() []*v1.Pod {
 	if cnt == 1 {
 		return []*v1.Pod{}
 	}
+	if cnt == 2 {
+		return []*v1.Pod{
+			{
+				ObjectMeta: v1.ObjectMeta{
+					UID:    "abcde",
+					Labels: map[string]string{"app": "nginx"},
+				},
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{
+						{
+							Ports: []v1.ContainerPort{
+								{
+									ContainerPort: 8080,
+									Protocol:      v1.ProtocolTCP,
+								},
+								{
+									ContainerPort: 9090,
+									Protocol:      v1.ProtocolTCP,
+								},
+							},
+						},
+					},
+				},
+				Status: v1.PodStatus{
+					Phase: v1.PodRunning,
+					PodIP: "10.32.0.1",
+				},
+			},
+		}
+	}
 	return []*v1.Pod{
 		{
 			ObjectMeta: v1.ObjectMeta{
@@ -234,6 +279,11 @@ func getMockPods() []*v1.Pod {
 						Ports: []v1.ContainerPort{
 							{
 								ContainerPort: 8080,
+								Protocol:      v1.ProtocolTCP,
+							},
+							{
+								ContainerPort: 9091,
+								Protocol:      v1.ProtocolTCP,
 							},
 						},
 					},
@@ -248,9 +298,9 @@ func getMockPods() []*v1.Pod {
 }
 
 func getMockServices() []*v1.Service {
-	if cnt > 3 {
-		return []*v1.Service{}
-	}
+	//if cnt > 2 {
+	//	return []*v1.Service{}
+	//}
 	return []*v1.Service{
 		{
 			ObjectMeta: v1.ObjectMeta{
@@ -258,14 +308,39 @@ func getMockServices() []*v1.Service {
 				UID:  "bdafsdfjlasdfas",
 			},
 			Spec: v1.ServiceSpec{
-				Selector: map[string]string{"app": "nginx"},
+				Selector:  map[string]string{"app": "nginx"},
+				ClusterIP: "100.1.1.0",
 				Ports: []v1.ServicePort{
 					{
 						Port:       80,
 						TargetPort: 8080,
+						Protocol:   v1.ProtocolTCP,
+					},
+					{
+						Port:       90,
+						TargetPort: 9090,
+						Protocol:   v1.ProtocolTCP,
 					},
 				},
 			},
 		},
 	}
+}
+
+func isEndpointPortsEqual(a, b []types.EndpointPort) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sort.Slice(a, func(i, j int) bool {
+		return a[i].Port < a[j].Port
+	})
+	sort.Slice(b, func(i, j int) bool {
+		return b[i].Port < b[j].Port
+	})
+	for i := range a {
+		if a[i].Port != b[i].Port || a[i].Protocol != b[i].Protocol {
+			return false
+		}
+	}
+	return true
 }

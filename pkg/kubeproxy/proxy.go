@@ -69,21 +69,79 @@ func (p *Proxy) syncLoopIteration(ctx context.Context, updateCh <-chan *types.Se
 func (p *Proxy) HandleServiceAdditions(updates []*types.ServiceUpdateSingle) {
 	log.Println("Handling service additions...")
 	for _, update := range updates {
-		log.Printf("Service %s added.", update.Service.Name)
+		log.Printf("Adding service %s.", update.Service.Name)
+		svc := update.Service
+		vip := svc.Spec.ClusterIP
+		reversePortMap := make(map[int32]int32)
+		for _, svcPort := range svc.Spec.Ports {
+			err := p.ipvs.AddVirtual(vip, uint16(svcPort.Port), svcPort.Protocol)
+			if err != nil {
+				log.Printf("Failed to add virtual server: %v", err)
+				continue
+			}
+			reversePortMap[svcPort.TargetPort] = svcPort.Port
+		}
+		for _, endpoint := range update.EndpointAdditions {
+			for _, endpointPort := range endpoint.Ports {
+				if svcPort, ok := reversePortMap[endpointPort.Port]; ok {
+					err := p.ipvs.AddRoute(vip, uint16(svcPort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
+					if err != nil {
+						log.Printf("Failed to add route: %v", err)
+					}
+				}
+			}
+		}
+		log.Printf("Service %s added.", svc.Name)
 	}
 }
 
 func (p *Proxy) HandleServiceDeletions(updates []*types.ServiceUpdateSingle) {
 	log.Println("Handling service deletions...")
 	for _, update := range updates {
-		log.Printf("Service %s deleted.", update.Service.Name)
+		log.Printf("Deleting service %s.", update.Service.Name)
+		svc := update.Service
+		vip := svc.Spec.ClusterIP
+		for _, svcPort := range svc.Spec.Ports {
+			err := p.ipvs.DeleteVirtual(vip, uint16(svcPort.Port), svcPort.Protocol)
+			if err != nil {
+				log.Printf("Failed to delete virtual server: %v", err)
+			}
+		}
+		log.Printf("Service %s deleted.", svc.Name)
 	}
 }
 
 func (p *Proxy) HandleServiceEndpointsUpdate(updates []*types.ServiceUpdateSingle) {
 	log.Println("Handling service endpoints update...")
 	for _, update := range updates {
-		log.Printf("Service %s endpoints updated.", update.Service.Name)
+		log.Printf("Updating service %s.", update.Service.Name)
+		svc := update.Service
+		vip := svc.Spec.ClusterIP
+		reversePortMap := make(map[int32]int32)
+		for _, svcPort := range svc.Spec.Ports {
+			reversePortMap[svcPort.TargetPort] = svcPort.Port
+		}
+		for _, endpoint := range update.EndpointDeletions {
+			for _, endpointPort := range endpoint.Ports {
+				if svcPort, ok := reversePortMap[endpointPort.Port]; ok {
+					err := p.ipvs.DeleteRoute(vip, uint16(svcPort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
+					if err != nil {
+						log.Printf("Failed to delete route: %v", err)
+					}
+				}
+			}
+		}
+		for _, endpoint := range update.EndpointAdditions {
+			for _, endpointPort := range endpoint.Ports {
+				if svcPort, ok := reversePortMap[endpointPort.Port]; ok {
+					err := p.ipvs.AddRoute(vip, uint16(svcPort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
+					if err != nil {
+						log.Printf("Failed to add route: %v", err)
+					}
+				}
+			}
+		}
+		log.Printf("Service %s updated.", svc.Name)
 	}
 }
 

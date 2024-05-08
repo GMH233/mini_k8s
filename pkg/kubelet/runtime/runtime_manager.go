@@ -216,8 +216,17 @@ func (rm *runtimeManager) getExposedPorts(containers []v1.Container) nat.PortSet
 	for _, c := range containers {
 		ports := c.Ports
 		portKeys := make(map[string]struct{})
-		for _, num := range ports {
-			key := fmt.Sprint(num.ContainerPort) + "/tcp"
+		for _, port := range ports {
+			var p string
+			switch port.Protocol {
+			case v1.ProtocolTCP:
+				p = "/tcp"
+			case v1.ProtocolUDP:
+				p = "/udp"
+			default:
+				p = "/tcp"
+			}
+			key := fmt.Sprint(port.ContainerPort) + p
 			portKeys[key] = struct{}{}
 		}
 		for key := range portKeys {
