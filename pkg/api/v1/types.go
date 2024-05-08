@@ -182,11 +182,11 @@ const (
 type ServicePort struct {
 	Name string `json:"name,omitempty"`
 	// 默认为TCP
-	Protocol Protocol
-	// 端口号
-	Port int32
-	// 目标端口号
-	TargetPort int32
+	Protocol Protocol `json:"protocol,omitempty"`
+	// 端口号， 1-65535
+	Port int32 `json:"port"`
+	// 目标端口号，1-65535
+	TargetPort int32 `json:"targetPort"`
 	// type为NodePort时，指定的端口号
 	NodePort int32 `json:"nodePort,omitempty"`
 }

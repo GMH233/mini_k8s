@@ -6,6 +6,7 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeapiserver/etcd"
+	"minikubernetes/pkg/kubeapiserver/utils"
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 
@@ -50,6 +51,9 @@ const (
 	Pod_status_url     = "/api/v1/namespaces/:namespace/pods/:podname/status"
 
 	Node_pods_url = "/api/v1/nodes/:nodename/pods"
+
+	AllServicesURL       = "/api/v1/services"
+	NamespaceServicesURL = "/api/v1/namespaces/:namespace/services"
 )
 
 /* NAMESPACE
@@ -149,6 +153,8 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(Node_pods_url, ser.GetPodsByNodeHandler) // for single-pod testing
 
+	ser.router.GET(AllServicesURL, ser.GetAllServicesHandler)
+	ser.router.POST(NamespaceServicesURL, ser.AddServiceHandler)
 }
 
 // handlers (trivial)
@@ -681,4 +687,154 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 			"data": all_pod_str,
 		},
 	)
+}
+
+func (s *kubeApiServer) GetAllServicesHandler(c *gin.Context) {
+	allSvcKey := "/registry/services"
+	res, err := s.store_cli.GetSubKeysValues(allSvcKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	services := make([]v1.Service, 0)
+	for _, v := range res {
+		var service v1.Service
+		err = json.Unmarshal([]byte(v), &service)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+				Error: "error in json unmarshal",
+			})
+			return
+		}
+		services = append(services, service)
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]v1.Service]{
+		Data: services,
+	})
+}
+
+func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
+	var service v1.Service
+	err := c.ShouldBind(&service)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "invalid service json",
+		})
+		return
+	}
+	if service.Name == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "service name is required",
+		})
+		return
+	}
+	if service.Kind != "Service" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "invalid api object kind",
+		})
+		return
+	}
+	// 默认协议为TCP
+	for i, port := range service.Spec.Ports {
+		if port.Protocol == "" {
+			service.Spec.Ports[i].Protocol = v1.ProtocolTCP
+		}
+		if port.TargetPort < 1 || port.TargetPort > 65535 {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+				Error: "invalid target port",
+			})
+			return
+		}
+		if port.Port < 1 || port.Port > 65535 {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+				Error: "invalid port",
+			})
+			return
+		}
+	}
+
+	var namespace string
+	if service.Namespace == "" {
+		namespace = "default"
+	} else {
+		namespace = service.Namespace
+	}
+	service.UID = v1.UID(uuid.NewUUID())
+	// 存uid
+	namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, service.Name)
+	// 存service json
+	allSvcKey := fmt.Sprintf("/registry/services/%s", service.UID)
+
+	// 检查service是否已经存在
+	result, err := s.store_cli.Get(namespaceSvcKey)
+	if err != nil || result != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Service]{
+			Error: fmt.Sprintf("service %s/%s already exists", namespace, service.Name),
+		})
+		return
+	}
+
+	service.CreationTimestamp = timestamp.NewTimestamp()
+
+	// 查bitmap，分配ip
+	bitmapKey := "/registry/IPPool/bitmap"
+	bitmapString, err := s.store_cli.Get(bitmapKey)
+	bitmap := []byte(bitmapString)
+	// etcd里没存bitmap，则初始化bitmap
+	if err != nil || bitmapString == "" {
+		initialBitmap := make([]byte, utils.IPPoolSize/8)
+		bitmap = initialBitmap
+		err = s.store_cli.Set(bitmapKey, string(initialBitmap))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+				Error: "error in writing to etcd",
+			})
+			return
+		}
+	}
+	ip, err := utils.AllocIP(bitmap)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "no available ip",
+		})
+		return
+	}
+	err = s.store_cli.Set(bitmapKey, string(bitmap))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+	service.Spec.ClusterIP = ip
+
+	serviceJson, err := json.Marshal(service)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+
+	// allSvcKey存service json
+	err = s.store_cli.Set(allSvcKey, string(serviceJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+
+	// namespaceSvcKey存uid
+	err = s.store_cli.Set(namespaceSvcKey, string(service.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.Service]{})
 }
