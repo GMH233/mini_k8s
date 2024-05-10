@@ -11,12 +11,14 @@ import (
 	"minikubernetes/pkg/kubelet/types"
 	"minikubernetes/pkg/kubelet/utils"
 	"sync"
+	"time"
 )
 
 type Kubelet struct {
-	nodeName       string
-	podManger      kubepod.Manager
-	podWorkers     PodWorkers
+	nodeName   string
+	podManger  kubepod.Manager
+	podWorkers PodWorkers
+	// collector
 	pleg           pleg.PodLifecycleEventGenerator
 	kubeClient     client.KubeletClient
 	runtimeManager runtime.RuntimeManager
@@ -50,9 +52,11 @@ func (kl *Kubelet) Run(ctx context.Context, wg *sync.WaitGroup, updates <-chan t
 func (kl *Kubelet) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-chan types.PodUpdate) {
 	defer wg.Done()
 	log.Println("Sync loop started.")
+	syncTicker := time.NewTicker(time.Second)
+	defer syncTicker.Stop()
 	plegCh := kl.pleg.Watch()
 	for {
-		if !kl.syncLoopIteration(ctx, updates, plegCh) {
+		if !kl.syncLoopIteration(ctx, updates, syncTicker.C, plegCh) {
 			break
 		}
 	}
@@ -60,7 +64,7 @@ func (kl *Kubelet) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-c
 	kl.DoCleanUp()
 }
 
-func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.PodUpdate, plegCh <-chan *pleg.PodLifecycleEvent) bool {
+func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.PodUpdate, syncCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent) bool {
 	// TODO 加入plegCh，syncCh等
 	select {
 	case update, ok := <-configCh:
@@ -85,6 +89,17 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 			return true
 		}
 		kl.HandlePodLifecycleEvent(pod, e)
+	case <-syncCh:
+		// TODO 定时同步Pod信息到metrics collector
+		allPods := kl.podManger.GetPods()
+
+		// 取到uid
+		// 从cache中取到pod对应的container id
+
+		// 调用metrics collector的接口
+
+		return true
+
 	case <-ctx.Done():
 		// 人为停止
 		return false
