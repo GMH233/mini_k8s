@@ -6,6 +6,7 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeapiserver/etcd"
+	"minikubernetes/pkg/kubeapiserver/utils"
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 
@@ -50,6 +51,10 @@ const (
 	Pod_status_url     = "/api/v1/namespaces/:namespace/pods/:podname/status"
 
 	Node_pods_url = "/api/v1/nodes/:nodename/pods"
+
+	AllServicesURL       = "/api/v1/services"
+	NamespaceServicesURL = "/api/v1/namespaces/:namespace/services"
+	SingleServiceURL     = "/api/v1/namespaces/:namespace/services/:servicename"
 )
 
 /* NAMESPACE
@@ -149,6 +154,9 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(Node_pods_url, ser.GetPodsByNodeHandler) // for single-pod testing
 
+	ser.router.GET(AllServicesURL, ser.GetAllServicesHandler)
+	ser.router.POST(NamespaceServicesURL, ser.AddServiceHandler)
+	ser.router.DELETE(SingleServiceURL, ser.DeleteServiceHandler)
 }
 
 // handlers (trivial)
@@ -630,7 +638,7 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 		})
 		return
 	}
-	log.Println("getting info of node: %v", node_name)
+	log.Printf("getting info of node: %v", node_name)
 
 	all_pod_str := make([]v1.Pod, 0)
 
@@ -681,4 +689,255 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 			"data": all_pod_str,
 		},
 	)
+}
+
+func (s *kubeApiServer) GetAllServicesHandler(c *gin.Context) {
+	allSvcKey := "/registry/services"
+	res, err := s.store_cli.GetSubKeysValues(allSvcKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	services := make([]v1.Service, 0)
+	for _, v := range res {
+		var service v1.Service
+		err = json.Unmarshal([]byte(v), &service)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+				Error: "error in json unmarshal",
+			})
+			return
+		}
+		services = append(services, service)
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]v1.Service]{
+		Data: services,
+	})
+}
+
+func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
+	var service v1.Service
+	err := c.ShouldBind(&service)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "invalid service json",
+		})
+		return
+	}
+	if service.Name == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "service name is required",
+		})
+		return
+	}
+	if service.Kind != "Service" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "invalid api object kind",
+		})
+		return
+	}
+	// 默认协议为TCP
+	for i, port := range service.Spec.Ports {
+		if port.Protocol == "" {
+			service.Spec.Ports[i].Protocol = v1.ProtocolTCP
+		}
+		if port.TargetPort < 1 || port.TargetPort > 65535 {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+				Error: "invalid target port",
+			})
+			return
+		}
+		if port.Port < 1 || port.Port > 65535 {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+				Error: "invalid port",
+			})
+			return
+		}
+	}
+
+	namespace := c.Param("namespace")
+	if namespace == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "namespace is required",
+		})
+		return
+	}
+	if service.Namespace != "" {
+		if service.Namespace != namespace {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+				Error: fmt.Sprintf("namespace mismatch, spec: %s, url: %s", service.Namespace, namespace),
+			})
+			return
+		}
+	} else {
+		if namespace != "default" {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+				Error: fmt.Sprintf("namespace mismatch, spec: empty(using default), url: %s", namespace),
+			})
+			return
+		}
+	}
+
+	// 存uid
+	namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, service.Name)
+
+	// 检查service是否已经存在
+	result, err := s.store_cli.Get(namespaceSvcKey)
+	if err != nil || result != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Service]{
+			Error: fmt.Sprintf("service %s/%s already exists", namespace, service.Name),
+		})
+		return
+	}
+
+	// 查bitmap，分配ip
+	bitmapKey := "/registry/IPPool/bitmap"
+	bitmapString, err := s.store_cli.Get(bitmapKey)
+	bitmap := []byte(bitmapString)
+	// etcd里没存bitmap，则初始化bitmap
+	if err != nil || bitmapString == "" {
+		initialBitmap := make([]byte, utils.IPPoolSize/8)
+		bitmap = initialBitmap
+		err = s.store_cli.Set(bitmapKey, string(initialBitmap))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+				Error: "error in writing to etcd",
+			})
+			return
+		}
+	}
+	ip, err := utils.AllocIP(bitmap)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "no available ip",
+		})
+		return
+	}
+	err = s.store_cli.Set(bitmapKey, string(bitmap))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+	service.Spec.ClusterIP = ip
+
+	service.Namespace = namespace
+	service.UID = v1.UID(uuid.NewUUID())
+	service.CreationTimestamp = timestamp.NewTimestamp()
+
+	serviceJson, err := json.Marshal(service)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+
+	// 存service json
+	allSvcKey := fmt.Sprintf("/registry/services/%s", service.UID)
+
+	// allSvcKey存service json
+	err = s.store_cli.Set(allSvcKey, string(serviceJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+
+	// namespaceSvcKey存uid
+	err = s.store_cli.Set(namespaceSvcKey, string(service.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.Service]{
+		Data: &service,
+	})
+}
+
+func (s *kubeApiServer) DeleteServiceHandler(c *gin.Context) {
+	namespace := c.Param("namespace")
+	serviceName := c.Param("servicename")
+	if namespace == "" || serviceName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: "namespace and service name cannot be empty",
+		})
+		return
+	}
+	namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, serviceName)
+	uid, err := s.store_cli.Get(namespaceSvcKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.Service]{
+			Error: fmt.Sprintf("service %s/%s not found", namespace, serviceName),
+		})
+		return
+	}
+
+	allSvcKey := fmt.Sprintf("/registry/services/%s", uid)
+	serviceJson, err := s.store_cli.Get(allSvcKey)
+	if err != nil || serviceJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in reading service from etcd",
+		})
+		return
+	}
+
+	var service v1.Service
+	err = json.Unmarshal([]byte(serviceJson), &service)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	// 释放ip
+	bitmapKey := "/registry/IPPool/bitmap"
+	bitmapString, err := s.store_cli.Get(bitmapKey)
+	if err != nil || bitmapString == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in reading ip pool bit map from etcd",
+		})
+		return
+	}
+	bitmap := []byte(bitmapString)
+	err = utils.FreeIP(service.Spec.ClusterIP, bitmap)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: fmt.Sprintf("error in free ip %s", service.Spec.ClusterIP),
+		})
+		return
+	}
+	err = s.store_cli.Set(bitmapKey, string(bitmap))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing ip pool bitmap to etcd",
+		})
+		return
+	}
+
+	err = s.store_cli.Delete(namespaceSvcKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in deleting service from etcd",
+		})
+		return
+	}
+	err = s.store_cli.Delete(allSvcKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in deleting service from etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.Service]{
+		Data: &service,
+	})
 }

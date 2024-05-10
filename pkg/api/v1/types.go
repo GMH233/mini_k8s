@@ -100,7 +100,8 @@ type Container struct {
 // ports:
 //   - containerPort: 80
 type ContainerPort struct {
-	ContainerPort int32 `json:"containerPort"`
+	ContainerPort int32    `json:"containerPort"`
+	Protocol      Protocol `json:"protocol,omitempty"`
 }
 
 // resources:
@@ -146,3 +147,53 @@ type PodStatus struct {
 	Phase PodPhase `json:"phase,omitempty"`
 	PodIP string   `json:"podIP,omitempty"`
 }
+
+type Service struct {
+	TypeMeta `json:",inline"`
+
+	ObjectMeta `json:"metadata,omitempty"`
+
+	Spec ServiceSpec `json:"spec,omitempty"`
+
+	Status ServiceStatus `json:"status,omitempty"`
+}
+
+type ServiceSpec struct {
+	// 类型，默认为ClusterIP
+	Type ServiceType `json:"type,omitempty"`
+	// 端口声明
+	Ports []ServicePort `json:"ports,omitempty"`
+	// 选择器，对应pod label
+	Selector map[string]string `json:"selector,omitempty"`
+	// 创建时由apiserver随机分配
+	ClusterIP string `json:"clusterIP,omitempty"`
+}
+
+type ServiceStatus struct {
+}
+
+type ServiceType string
+
+const (
+	ServiceTypeClusterIP ServiceType = "ClusterIP"
+	ServiceTypeNodePort  ServiceType = "NodePort"
+)
+
+type ServicePort struct {
+	Name string `json:"name,omitempty"`
+	// 默认为TCP
+	Protocol Protocol `json:"protocol,omitempty"`
+	// 端口号， 1-65535
+	Port int32 `json:"port"`
+	// 目标端口号，1-65535
+	TargetPort int32 `json:"targetPort"`
+	// type为NodePort时，指定的端口号
+	NodePort int32 `json:"nodePort,omitempty"`
+}
+
+type Protocol string
+
+const (
+	ProtocolTCP Protocol = "tcp"
+	ProtocolUDP Protocol = "udp"
+)

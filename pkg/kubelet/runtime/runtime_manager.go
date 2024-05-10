@@ -132,7 +132,8 @@ func NewRuntimeManager() RuntimeManager {
 func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 	rm.lock.Lock()
 	defer rm.lock.Unlock()
-	PauseId, err := rm.CreatePauseContainer(pod.UID, pod.Name, pod.Namespace)
+	//PauseId, err := rm.CreatePauseContainer(pod.UID, pod.Name, pod.Namespace)
+	PauseId, err := rm.CreatePauseContainer(pod)
 	if err != nil {
 		panic(err)
 	}
@@ -152,7 +153,11 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 	return nil
 }
 
-func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, PodNameSpace string) (string, error) {
+// func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, PodNameSpace string) (string, error) {
+func (rm *runtimeManager) CreatePauseContainer(pod *v1.Pod) (string, error) {
+	PodID := pod.UID
+	PodName := pod.Name
+	PodNameSpace := pod.Namespace
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -182,11 +187,13 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 	label["Name"] = PodName + ":PauseContainer"
 	label["PodNamespace"] = PodNameSpace
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image:  PauseContainerImage,
-		Tty:    false,
-		Labels: label,
-		//ExposedPorts: exposedPortSet,
-	}, nil, nil, nil, "")
+		Image:        PauseContainerImage,
+		Tty:          false,
+		Labels:       label,
+		ExposedPorts: rm.getExposedPorts(pod.Spec.Containers),
+	}, &container.HostConfig{
+		PortBindings: make(nat.PortMap),
+	}, nil, nil, "")
 	if err != nil {
 		panic(err)
 	}
@@ -202,6 +209,48 @@ func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, Pod
 	rm.IpMap[PodID] = ip
 
 	return resp.ID, nil
+}
+
+func (rm *runtimeManager) getExposedPorts(containers []v1.Container) nat.PortSet {
+	exposedPorts := nat.PortSet{}
+	for _, c := range containers {
+		ports := c.Ports
+		portKeys := make(map[string]struct{})
+		for _, port := range ports {
+			var p string
+			switch port.Protocol {
+			case v1.ProtocolTCP:
+				p = "/tcp"
+			case v1.ProtocolUDP:
+				p = "/udp"
+			default:
+				p = "/tcp"
+			}
+			key := fmt.Sprint(port.ContainerPort) + p
+			portKeys[key] = struct{}{}
+		}
+		for key := range portKeys {
+			exposedPorts[nat.Port(key)] = struct{}{}
+		}
+	}
+	return exposedPorts
+}
+
+func (rm *runtimeManager) getPortBindings(containers []v1.Container) nat.PortMap {
+	portBindings := make(nat.PortMap)
+	for _, c := range containers {
+		ports := c.Ports
+		for _, num := range ports {
+			key := nat.Port(fmt.Sprint(num.ContainerPort) + "/tcp")
+			portBindings[key] = []nat.PortBinding{
+				{
+					HostIP:   "0.0.0.0",
+					HostPort: "",
+				},
+			}
+		}
+	}
+	return portBindings
 }
 
 func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodID v1.UID, PodName string, PodNameSpace string, volumes map[string]string) (string, error) {
@@ -229,21 +278,21 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 	} else {
 		//fmt.Println("already exist")
 	}
-
-	ports := ct.Ports
-	exposedPortSet := nat.PortSet{}
-	portKeys := make(map[string]struct{})
-
-	for _, num := range ports {
-		//fmt.Println(num.ContainerPort)
-
-		key := fmt.Sprint(num.ContainerPort) + "/tcp"
-		//fmt.Println(key)
-		portKeys[key] = struct{}{}
-	}
-	for key := range portKeys {
-		exposedPortSet[nat.Port(key)] = struct{}{}
-	}
+	//
+	//ports := ct.Ports
+	//exposedPortSet := nat.PortSet{}
+	//portKeys := make(map[string]struct{})
+	//
+	//for _, num := range ports {
+	//	//fmt.Println(num.ContainerPort)
+	//
+	//	key := fmt.Sprint(num.ContainerPort) + "/tcp"
+	//	//fmt.Println(key)
+	//	portKeys[key] = struct{}{}
+	//}
+	//for key := range portKeys {
+	//	exposedPortSet[nat.Port(key)] = struct{}{}
+	//}
 
 	pauseRef := "container:" + PauseId
 	label := make(map[string]string)
