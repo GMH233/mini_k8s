@@ -28,6 +28,9 @@ func AllocIP(bitmap []byte) (string, error) {
 }
 
 func FreeIP(ip string, bitmap []byte) error {
+	if len(bitmap) != IPPoolSize/8 {
+		return fmt.Errorf("invalid bitmap size")
+	}
 	idx := 0
 	_, err := fmt.Sscanf(ip, IPPrefix+"%d", &idx)
 	if err != nil {

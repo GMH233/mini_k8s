@@ -71,18 +71,18 @@ func (ps *ProxyServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (ps *ProxyServer) updateService() {
-	//pods, err := ps.client.GetAllPods()
-	//if err != nil {
-	//	log.Printf("Failed to get pods: %v", err)
-	//	return
-	//}
-	//services, err := ps.client.GetAllServices()
-	//if err != nil {
-	//	log.Printf("Failed to get services: %v", err)
-	//	return
-	//}
-	pods := getMockPods()
-	services := getMockServices()
+	pods, err := ps.client.GetAllPods()
+	if err != nil {
+		log.Printf("Failed to get pods: %v", err)
+		return
+	}
+	services, err := ps.client.GetAllServices()
+	if err != nil {
+		log.Printf("Failed to get services: %v", err)
+		return
+	}
+	//pods := getMockPods()
+	//services := getMockServices()
 
 	newMap := make(map[v1.UID]*types.ServiceAndEndpoints)
 	for _, service := range services {

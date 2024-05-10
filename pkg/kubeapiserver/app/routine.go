@@ -638,7 +638,7 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 		})
 		return
 	}
-	log.Println("getting info of node: %v", node_name)
+	log.Printf("getting info of node: %v", node_name)
 
 	all_pod_str := make([]v1.Pod, 0)
 
