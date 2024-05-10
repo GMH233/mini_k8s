@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/docker/docker/api/types/mount"
 	"io"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -480,13 +479,21 @@ func (rm *runtimeManager) DeletePod(ID v1.UID) error {
 	defer rm.lock.Unlock()
 	containers, err := rm.getAllContainersIncludingPause()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	for _, container := range containers {
 		if container.Labels["PodID"] == string(ID) {
-			err := rm.deleteContainer(container)
+			if _, ok := container.Labels["PauseType"]; ok {
+				// log.Printf("Container ID: %s\n", container.ID)
+				err = nw.Detach(container.ID)
+				if err != nil {
+					return err
+				}
+				delete(rm.IpMap, v1.UID(container.Labels["PodID"]))
+			}
+			err = rm.deleteContainer(container)
 			if err != nil {
-				panic(err)
+				return err
 			}
 		}
 	}
@@ -497,24 +504,24 @@ func (rm *runtimeManager) getAllContainersIncludingPause() ([]types.Container, e
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer cli.Close()
 
 	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	for _, container := range containers {
-		if _, ok := container.Labels["PauseType"]; ok {
-			log.Printf("Container ID: %s\n", container.ID)
-			err := nw.Detach(container.ID)
-			if err != nil {
-				panic(err)
-			}
-			delete(rm.IpMap, v1.UID(container.Labels["PodID"]))
-		}
-	}
+	//for _, container := range containers {
+	//	if _, ok := container.Labels["PauseType"]; ok {
+	//		log.Printf("Container ID: %s\n", container.ID)
+	//		err := nw.Detach(container.ID)
+	//		if err != nil {
+	//			panic(err)
+	//		}
+	//		delete(rm.IpMap, v1.UID(container.Labels["PodID"]))
+	//	}
+	//}
 
 	return containers, nil
 }
