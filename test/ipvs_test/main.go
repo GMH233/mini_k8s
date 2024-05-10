@@ -14,7 +14,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	err = ipvs.AddVirtual("100.100.100.10", 30080, v1.ProtocolTCP)
+	err = ipvs.AddVirtual("100.100.100.10", 30080, v1.ProtocolTCP, true)
 	if err != nil {
 		panic(err)
 	}
@@ -26,7 +26,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	err = ipvs.DeleteVirtual("100.100.100.10", 30080, v1.ProtocolTCP)
+	err = ipvs.DeleteVirtual("100.100.100.10", 30080, v1.ProtocolTCP, true)
 	if err != nil {
 		panic(err)
 	}

@@ -13,9 +13,9 @@ import (
 
 type IPVS interface {
 	Init() error
-	AddVirtual(vip string, port uint16, protocol v1.Protocol) error
+	AddVirtual(vip string, port uint16, protocol v1.Protocol, isVirtualDummy bool) error
 	AddRoute(vip string, vport uint16, rip string, rport uint16, protocol v1.Protocol) error
-	DeleteVirtual(vip string, port uint16, protocol v1.Protocol) error
+	DeleteVirtual(vip string, port uint16, protocol v1.Protocol, isVirtualDummy bool) error
 	DeleteRoute(vip string, vport uint16, rip string, rport uint16, protocol v1.Protocol) error
 	Clear() error
 }
@@ -121,7 +121,7 @@ func (b *basicIPVS) Init() error {
 	return nil
 }
 
-func (b *basicIPVS) AddVirtual(vip string, port uint16, protocol v1.Protocol) error {
+func (b *basicIPVS) AddVirtual(vip string, port uint16, protocol v1.Protocol, isVirtualDummy bool) error {
 	addr := net.ParseIP(vip)
 	if addr == nil {
 		return fmt.Errorf("invalid ip address: %s", vip)
@@ -138,6 +138,9 @@ func (b *basicIPVS) AddVirtual(vip string, port uint16, protocol v1.Protocol) er
 		return err
 	}
 	// ip addr add
+	if !isVirtualDummy {
+		return nil
+	}
 	err = addAddrToDummy(vip + "/32")
 	if err != nil {
 		if err.Error() == "file exists" {
@@ -175,7 +178,7 @@ func (b *basicIPVS) AddRoute(vip string, vport uint16, rip string, rport uint16,
 	return err
 }
 
-func (b *basicIPVS) DeleteVirtual(vip string, port uint16, protocol v1.Protocol) error {
+func (b *basicIPVS) DeleteVirtual(vip string, port uint16, protocol v1.Protocol, isVirtualDummy bool) error {
 	addr := net.ParseIP(vip)
 	if addr == nil {
 		return fmt.Errorf("invalid ip address: %s", vip)
@@ -189,6 +192,10 @@ func (b *basicIPVS) DeleteVirtual(vip string, port uint16, protocol v1.Protocol)
 	err := b.handle.DelService(svc)
 	if err != nil {
 		return err
+	}
+	// ip addr del
+	if !isVirtualDummy {
+		return nil
 	}
 	err = delAddrFromDummy(vip + "/32")
 	return err

@@ -2,14 +2,18 @@ package kubeproxy
 
 import (
 	"context"
+	"fmt"
+	"github.com/vishvananda/netlink"
 	"log"
+	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeproxy/route"
 	"minikubernetes/pkg/kubeproxy/types"
 	"sync"
 )
 
 type Proxy struct {
-	ipvs route.IPVS
+	ipvs   route.IPVS
+	hostIP string
 }
 
 func NewKubeProxy() (*Proxy, error) {
@@ -30,7 +34,29 @@ func (p *Proxy) Run(ctx context.Context, wg *sync.WaitGroup, updates <-chan *typ
 		return
 	}
 	log.Printf("IPVS initialized.")
+	// get host ip
+	hostIP, err := getHostIP()
+	if err != nil {
+		log.Printf("Failed to get host ip: %v", err)
+		return
+	}
+	p.hostIP = hostIP
 	p.syncLoop(ctx, wg, updates)
+}
+
+func getHostIP() (string, error) {
+	link, err := netlink.LinkByName("ens3")
+	if err != nil {
+		return "", err
+	}
+	addrList, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return "", err
+	}
+	if len(addrList) == 0 {
+		return "", fmt.Errorf("no ip address found")
+	}
+	return addrList[0].IP.String(), nil
 }
 
 func (p *Proxy) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-chan *types.ServiceUpdate) {
@@ -72,19 +98,36 @@ func (p *Proxy) HandleServiceAdditions(updates []*types.ServiceUpdateSingle) {
 		log.Printf("Adding service %s.", update.Service.Name)
 		svc := update.Service
 		vip := svc.Spec.ClusterIP
-		reversePortMap := make(map[int32]int32)
+		// 反向映射：targetPort -> port / nodePort
+		reverseSvcPortMap := make(map[int32]int32)
+		reverseNodePortMap := make(map[int32]int32)
+		isNodePort := svc.Spec.Type == v1.ServiceTypeNodePort
 		for _, svcPort := range svc.Spec.Ports {
-			err := p.ipvs.AddVirtual(vip, uint16(svcPort.Port), svcPort.Protocol)
+			err := p.ipvs.AddVirtual(vip, uint16(svcPort.Port), svcPort.Protocol, true)
 			if err != nil {
 				log.Printf("Failed to add virtual server: %v", err)
 				continue
 			}
-			reversePortMap[svcPort.TargetPort] = svcPort.Port
+			if isNodePort {
+				err = p.ipvs.AddVirtual(p.hostIP, uint16(svcPort.NodePort), svcPort.Protocol, false)
+				if err != nil {
+					log.Printf("Failed to add virtual server: %v", err)
+					continue
+				}
+				reverseNodePortMap[svcPort.TargetPort] = svcPort.NodePort
+			}
+			reverseSvcPortMap[svcPort.TargetPort] = svcPort.Port
 		}
 		for _, endpoint := range update.EndpointAdditions {
 			for _, endpointPort := range endpoint.Ports {
-				if svcPort, ok := reversePortMap[endpointPort.Port]; ok {
+				if svcPort, ok := reverseSvcPortMap[endpointPort.Port]; ok {
 					err := p.ipvs.AddRoute(vip, uint16(svcPort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
+					if err != nil {
+						log.Printf("Failed to add route: %v", err)
+					}
+				}
+				if nodePort, ok := reverseNodePortMap[endpointPort.Port]; ok {
+					err := p.ipvs.AddRoute(p.hostIP, uint16(nodePort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
 					if err != nil {
 						log.Printf("Failed to add route: %v", err)
 					}
@@ -101,10 +144,17 @@ func (p *Proxy) HandleServiceDeletions(updates []*types.ServiceUpdateSingle) {
 		log.Printf("Deleting service %s.", update.Service.Name)
 		svc := update.Service
 		vip := svc.Spec.ClusterIP
+		isNodePort := svc.Spec.Type == v1.ServiceTypeNodePort
 		for _, svcPort := range svc.Spec.Ports {
-			err := p.ipvs.DeleteVirtual(vip, uint16(svcPort.Port), svcPort.Protocol)
+			err := p.ipvs.DeleteVirtual(vip, uint16(svcPort.Port), svcPort.Protocol, true)
 			if err != nil {
 				log.Printf("Failed to delete virtual server: %v", err)
+			}
+			if isNodePort {
+				err = p.ipvs.DeleteVirtual(p.hostIP, uint16(svcPort.NodePort), svcPort.Protocol, false)
+				if err != nil {
+					log.Printf("Failed to delete virtual server: %v", err)
+				}
 			}
 		}
 		log.Printf("Service %s deleted.", svc.Name)
@@ -117,14 +167,25 @@ func (p *Proxy) HandleServiceEndpointsUpdate(updates []*types.ServiceUpdateSingl
 		log.Printf("Updating service %s.", update.Service.Name)
 		svc := update.Service
 		vip := svc.Spec.ClusterIP
-		reversePortMap := make(map[int32]int32)
+		reverseSvcPortMap := make(map[int32]int32)
+		reverseNodePortMap := make(map[int32]int32)
+		isNodePort := svc.Spec.Type == v1.ServiceTypeNodePort
 		for _, svcPort := range svc.Spec.Ports {
-			reversePortMap[svcPort.TargetPort] = svcPort.Port
+			reverseSvcPortMap[svcPort.TargetPort] = svcPort.Port
+			if isNodePort {
+				reverseNodePortMap[svcPort.TargetPort] = svcPort.NodePort
+			}
 		}
 		for _, endpoint := range update.EndpointDeletions {
 			for _, endpointPort := range endpoint.Ports {
-				if svcPort, ok := reversePortMap[endpointPort.Port]; ok {
+				if svcPort, ok := reverseSvcPortMap[endpointPort.Port]; ok {
 					err := p.ipvs.DeleteRoute(vip, uint16(svcPort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
+					if err != nil {
+						log.Printf("Failed to delete route: %v", err)
+					}
+				}
+				if nodePort, ok := reverseNodePortMap[endpointPort.Port]; ok {
+					err := p.ipvs.DeleteRoute(p.hostIP, uint16(nodePort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
 					if err != nil {
 						log.Printf("Failed to delete route: %v", err)
 					}
@@ -133,8 +194,14 @@ func (p *Proxy) HandleServiceEndpointsUpdate(updates []*types.ServiceUpdateSingl
 		}
 		for _, endpoint := range update.EndpointAdditions {
 			for _, endpointPort := range endpoint.Ports {
-				if svcPort, ok := reversePortMap[endpointPort.Port]; ok {
+				if svcPort, ok := reverseSvcPortMap[endpointPort.Port]; ok {
 					err := p.ipvs.AddRoute(vip, uint16(svcPort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
+					if err != nil {
+						log.Printf("Failed to add route: %v", err)
+					}
+				}
+				if nodePort, ok := reverseNodePortMap[endpointPort.Port]; ok {
+					err := p.ipvs.AddRoute(p.hostIP, uint16(nodePort), endpoint.IP, uint16(endpointPort.Port), endpointPort.Protocol)
 					if err != nil {
 						log.Printf("Failed to add route: %v", err)
 					}

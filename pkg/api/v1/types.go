@@ -179,6 +179,13 @@ const (
 	ServiceTypeNodePort  ServiceType = "NodePort"
 )
 
+const (
+	NodePortMin = 30000
+	NodePortMax = 32767
+	PortMin     = 1
+	PortMax     = 65535
+)
+
 type ServicePort struct {
 	Name string `json:"name,omitempty"`
 	// 默认为TCP
