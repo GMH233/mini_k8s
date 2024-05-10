@@ -191,11 +191,21 @@ func (ser *kubeApiServer) GetAllPodsHandler(con *gin.Context) {
 
 	res, err := ser.store_cli.GetSubKeysValues(all_pod_keystr)
 
-	if res == nil || len(res) == 0 || err != nil {
-		log.Println("no pod exists")
-		con.JSON(http.StatusNotFound, gin.H{
-			"error": "no pod exists",
+	//if res == nil || len(res) == 0 || err != nil {
+	//	log.Println("no pod exists")
+	//	con.JSON(http.StatusNotFound, gin.H{
+	//		"error": "no pod exists",
+	//	})
+	//	return
+	//}
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in reading all pods from etcd",
 		})
+		return
+	}
+	if len(res) == 0 {
+		con.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Pod]{Data: nil})
 		return
 	}
 	for _, v := range res {
@@ -238,11 +248,21 @@ func (ser *kubeApiServer) GetPodsByNamespaceHandler(con *gin.Context) {
 
 	res, err := ser.store_cli.GetSubKeysValues(namespace_pod_keystr)
 
-	if res == nil || len(res) == 0 || err != nil {
-		log.Println("no pod exists")
-		con.JSON(http.StatusNotFound, gin.H{
-			"error": "no pod exists",
+	//if res == nil || len(res) == 0 || err != nil {
+	//	log.Println("no pod exists")
+	//	con.JSON(http.StatusNotFound, gin.H{
+	//		"error": "no pod exists",
+	//	})
+	//	return
+	//}
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in reading all pods from etcd",
 		})
+		return
+	}
+	if len(res) == 0 {
+		con.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Pod]{Data: nil})
 		return
 	}
 
@@ -692,29 +712,103 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 }
 
 func (s *kubeApiServer) GetAllServicesHandler(c *gin.Context) {
-	allSvcKey := "/registry/services"
-	res, err := s.store_cli.GetSubKeysValues(allSvcKey)
+	//allSvcKey := "/registry/services"
+	//res, err := s.store_cli.GetSubKeysValues(allSvcKey)
+	//if err != nil {
+	//	c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+	//		Error: "error in reading from etcd",
+	//	})
+	//	return
+	//}
+	//services := make([]v1.Service, 0)
+	//for _, v := range res {
+	//	var service v1.Service
+	//	err = json.Unmarshal([]byte(v), &service)
+	//	if err != nil {
+	//		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+	//			Error: "error in json unmarshal",
+	//		})
+	//		return
+	//	}
+	//	services = append(services, service)
+	//}
+	services, err := s.getAllServicesFromEtcd()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
-			Error: "error in reading from etcd",
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]v1.Service]{
+			Error: fmt.Sprintf("error in reading all services from etcd: %v", err),
 		})
 		return
 	}
-	services := make([]v1.Service, 0)
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Service]{
+		Data: services,
+	})
+}
+
+func (s *kubeApiServer) getAllServicesFromEtcd() ([]*v1.Service, error) {
+	allSvcKey := "/registry/services"
+	res, err := s.store_cli.GetSubKeysValues(allSvcKey)
+	if err != nil {
+		return nil, err
+	}
+	services := make([]*v1.Service, 0)
 	for _, v := range res {
 		var service v1.Service
 		err = json.Unmarshal([]byte(v), &service)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
-				Error: "error in json unmarshal",
-			})
-			return
+			return nil, err
 		}
-		services = append(services, service)
+		services = append(services, &service)
 	}
-	c.JSON(http.StatusOK, v1.BaseResponse[[]v1.Service]{
-		Data: services,
-	})
+	return services, nil
+}
+
+func (s *kubeApiServer) checkTypeAndPorts(service *v1.Service) error {
+	// 默认类型为ClusterIP
+	if service.Spec.Type == "" {
+		service.Spec.Type = v1.ServiceTypeClusterIP
+	} else if service.Spec.Type != v1.ServiceTypeClusterIP && service.Spec.Type != v1.ServiceTypeNodePort {
+		return fmt.Errorf("invalid service type %s", service.Spec.Type)
+	}
+	// 默认协议为TCP
+	nodePortSet := make(map[int32]struct{})
+	for i, port := range service.Spec.Ports {
+		if port.Protocol == "" {
+			service.Spec.Ports[i].Protocol = v1.ProtocolTCP
+		}
+		if port.TargetPort < v1.PortMin || port.TargetPort > v1.PortMax {
+			return fmt.Errorf("invalid target port %d", port.TargetPort)
+		}
+		if port.Port < v1.PortMin || port.Port > v1.PortMax {
+			return fmt.Errorf("invalid port %d", port.Port)
+		}
+		if service.Spec.Type == v1.ServiceTypeNodePort {
+			if port.NodePort < v1.NodePortMin || port.NodePort > v1.NodePortMax {
+				return fmt.Errorf("invalid node port %d", port.NodePort)
+			}
+			if _, ok := nodePortSet[port.NodePort]; ok {
+				return fmt.Errorf("there are conflicting node ports: %v", port.NodePort)
+			}
+			nodePortSet[port.NodePort] = struct{}{}
+		}
+	}
+	// 检查所有service node port是否有冲突
+	if service.Spec.Type == v1.ServiceTypeNodePort {
+		allServices, err := s.getAllServicesFromEtcd()
+		if err != nil {
+			return fmt.Errorf("error in reading all services from etcd: %v", err)
+		}
+		for _, svc := range allServices {
+			if svc.Spec.Type != v1.ServiceTypeNodePort {
+				continue
+			}
+			for _, port := range svc.Spec.Ports {
+				if _, ok := nodePortSet[port.NodePort]; ok {
+					return fmt.Errorf("node port %v conflicts with service %v", port.NodePort, svc.Name)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
@@ -738,23 +832,12 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 		})
 		return
 	}
-	// 默认协议为TCP
-	for i, port := range service.Spec.Ports {
-		if port.Protocol == "" {
-			service.Spec.Ports[i].Protocol = v1.ProtocolTCP
-		}
-		if port.TargetPort < 1 || port.TargetPort > 65535 {
-			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
-				Error: "invalid target port",
-			})
-			return
-		}
-		if port.Port < 1 || port.Port > 65535 {
-			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
-				Error: "invalid port",
-			})
-			return
-		}
+	err = s.checkTypeAndPorts(&service)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: err.Error(),
+		})
+		return
 	}
 
 	namespace := c.Param("namespace")
