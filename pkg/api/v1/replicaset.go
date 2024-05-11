@@ -68,7 +68,7 @@ type ReplicaSetSpec struct {
 	// Defaults to 1.
 	// More info: https://kubernetes.io/docs/concepts/workloads/controllers/replicationcontroller/#what-is-a-replicationcontroller
 	// +optional
-	Replicas *int32 `json:"replicas,omitempty" protobuf:"varint,1,opt,name=replicas"`
+	Replicas int32 `json:"replicas,omitempty" protobuf:"varint,1,opt,name=replicas"`
 
 	// Minimum number of seconds for which a newly created pod should be ready
 	// without any of its container crashing, for it to be considered available.
@@ -180,11 +180,11 @@ type LabelSelectorRequirement struct {
 type PodTemplateSpec struct {
 	// Metadata of the pods created from this template.
 	// +optional
-	ObjectMeta
+	ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// Spec defines the behavior of a pod.
 	// +optional
-	Spec PodSpec
+	Spec PodSpec `json:"spec,omitempty"`
 }
 
 // A label selector operator is the set of operators that can be used in a selector requirement.
