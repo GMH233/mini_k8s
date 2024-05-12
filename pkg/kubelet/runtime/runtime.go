@@ -1,6 +1,11 @@
 package runtime
 
 import (
+	"context"
+	"fmt"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
 	v1 "minikubernetes/pkg/api/v1"
 	"time"
 )
@@ -74,4 +79,29 @@ type ContainerResources struct {
 	CPULimit      string
 	MemoryRequest string
 	MemoryLimit   string
+}
+
+func GetContainerBridgeIP(containerName string) (string, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return "", err
+	}
+	defer cli.Close()
+	f := filters.NewArgs()
+	f.Add("name", containerName)
+	containers, err := cli.ContainerList(context.Background(), container.ListOptions{
+		Filters: f,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(containers) == 0 {
+		return "", fmt.Errorf("container %s not found", containerName)
+	}
+	c := containers[0]
+	if ep, ok := c.NetworkSettings.Networks["bridge"]; !ok {
+		return "", fmt.Errorf("container %s does not have bridge network", containerName)
+	} else {
+		return ep.IPAddress, nil
+	}
 }

@@ -15,15 +15,18 @@ import (
 )
 
 type ProxyServer struct {
-	client  kubeclient.Client
-	updates chan *types.ServiceUpdate
-	latest  map[v1.UID]*types.ServiceAndEndpoints
+	client         kubeclient.Client
+	serviceUpdates chan *types.ServiceUpdate
+	dnsUpdates     chan *types.DNSUpdate
+	latest         map[v1.UID]*types.ServiceAndEndpoints
+	latestDNS      map[v1.UID]*v1.DNS
 }
 
 func NewProxyServer(apiServerIP string) (*ProxyServer, error) {
 	ps := &ProxyServer{}
 	ps.client = kubeclient.NewClient(apiServerIP)
-	ps.updates = make(chan *types.ServiceUpdate, 1)
+	ps.serviceUpdates = make(chan *types.ServiceUpdate, 1)
+	ps.dnsUpdates = make(chan *types.DNSUpdate, 1)
 	ps.latest = make(map[v1.UID]*types.ServiceAndEndpoints)
 	return ps, nil
 }
@@ -51,7 +54,7 @@ func (ps *ProxyServer) RunProxy(ctx context.Context, wg *sync.WaitGroup) {
 		log.Printf("Failed to create proxy: %v", err)
 		return
 	}
-	go proxy.Run(ctx, wg, ps.updates)
+	go proxy.Run(ctx, wg, ps.serviceUpdates, ps.dnsUpdates)
 }
 
 func (ps *ProxyServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
@@ -62,6 +65,7 @@ func (ps *ProxyServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
 		select {
 		case <-timer.C:
 			ps.updateService()
+			ps.updateDNS()
 			timer.Reset(SyncPeriod)
 		case <-ctx.Done():
 			log.Println("Shutting down api server watcher")
@@ -70,19 +74,62 @@ func (ps *ProxyServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+func (ps *ProxyServer) updateDNS() {
+	//dnsSlice, err := ps.client.GetAllDNS()
+	//if err != nil {
+	//	log.Printf("Failed to get dns: %v", err)
+	//	return
+	//}
+	dnsSlice := getMockDNS()
+	newMap := make(map[v1.UID]*v1.DNS)
+	for _, dns := range dnsSlice {
+		newMap[dns.ObjectMeta.UID] = dns
+	}
+	defer func() {
+		ps.latestDNS = newMap
+	}()
+
+	var dnsAdditions []*v1.DNS
+	var dnsDeletions []*v1.DNS
+	for uid, dns := range ps.latestDNS {
+		if _, ok := newMap[uid]; !ok {
+			// delete
+			dnsDeletions = append(dnsDeletions, dns)
+		}
+	}
+	for uid, dns := range newMap {
+		if _, ok := ps.latestDNS[uid]; !ok {
+			// add
+			dnsAdditions = append(dnsAdditions, dns)
+		}
+	}
+	if len(dnsAdditions) > 0 {
+		ps.dnsUpdates <- &types.DNSUpdate{
+			DNS: dnsAdditions,
+			Op:  types.DNSAdd,
+		}
+	}
+	if len(dnsDeletions) > 0 {
+		ps.dnsUpdates <- &types.DNSUpdate{
+			DNS: dnsDeletions,
+			Op:  types.DNSDelete,
+		}
+	}
+}
+
 func (ps *ProxyServer) updateService() {
-	pods, err := ps.client.GetAllPods()
-	if err != nil {
-		log.Printf("Failed to get pods: %v", err)
-		return
-	}
-	services, err := ps.client.GetAllServices()
-	if err != nil {
-		log.Printf("Failed to get services: %v", err)
-		return
-	}
-	//pods := getMockPods()
-	//services := getMockServices()
+	//pods, err := ps.client.GetAllPods()
+	//if err != nil {
+	//	log.Printf("Failed to get pods: %v", err)
+	//	return
+	//}
+	//services, err := ps.client.GetAllServices()
+	//if err != nil {
+	//	log.Printf("Failed to get services: %v", err)
+	//	return
+	//}
+	pods := getMockPods()
+	services := getMockServices()
 
 	newMap := make(map[v1.UID]*types.ServiceAndEndpoints)
 	for _, service := range services {
@@ -152,19 +199,19 @@ func (ps *ProxyServer) updateService() {
 	}
 
 	if len(additions) > 0 {
-		ps.updates <- &types.ServiceUpdate{
+		ps.serviceUpdates <- &types.ServiceUpdate{
 			Updates: additions,
 			Op:      types.ServiceAdd,
 		}
 	}
 	if len(deletions) > 0 {
-		ps.updates <- &types.ServiceUpdate{
+		ps.serviceUpdates <- &types.ServiceUpdate{
 			Updates: deletions,
 			Op:      types.ServiceDelete,
 		}
 	}
 	if len(endpointUpdates) > 0 {
-		ps.updates <- &types.ServiceUpdate{
+		ps.serviceUpdates <- &types.ServiceUpdate{
 			Updates: endpointUpdates,
 			Op:      types.ServiceEndpointsUpdate,
 		}
@@ -304,8 +351,9 @@ func getMockServices() []*v1.Service {
 	return []*v1.Service{
 		{
 			ObjectMeta: v1.ObjectMeta{
-				Name: "nginx",
-				UID:  "bdafsdfjlasdfas",
+				Name:      "nginx",
+				UID:       "bdafsdfjlasdfas",
+				Namespace: "default",
 			},
 			Spec: v1.ServiceSpec{
 				Selector:  map[string]string{"app": "nginx"},
@@ -325,6 +373,39 @@ func getMockServices() []*v1.Service {
 			},
 		},
 	}
+}
+
+func getMockDNS() []*v1.DNS {
+	if cnt >= 2 && cnt <= 6 {
+		return []*v1.DNS{
+			{
+				ObjectMeta: v1.ObjectMeta{
+					Name:      "nginx",
+					UID:       "bdafsdfjlasdfas",
+					Namespace: "default",
+				},
+				Spec: v1.DNSSpec{
+					Rules: []v1.DNSRule{
+						{
+							Host: "myservice.test.com",
+							Paths: []v1.DNSPath{
+								{
+									Path: "/service1",
+									Backend: v1.DNSBackend{
+										Service: v1.DNSServiceBackend{
+											Name: "nginx",
+											Port: 80,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+	return []*v1.DNS{}
 }
 
 func isEndpointPortsEqual(a, b []types.EndpointPort) bool {

@@ -11,6 +11,7 @@ import (
 type Client interface {
 	GetAllServices() ([]*v1.Service, error)
 	GetAllPods() ([]*v1.Pod, error)
+	GetAllDNS() ([]*v1.DNS, error)
 }
 
 type client struct {
@@ -56,6 +57,27 @@ func (c *client) GetAllPods() ([]*v1.Pod, error) {
 		return nil, err
 	}
 	var baseResponse v1.BaseResponse[[]*v1.Pod]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetAllDNS() ([]*v1.DNS, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/dns", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.DNS]
 	err = json.Unmarshal(body, &baseResponse)
 	if err != nil {
 		return nil, err
