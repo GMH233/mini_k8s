@@ -83,7 +83,7 @@ func (c *client) GetAllDNS() ([]*v1.DNS, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
+		return nil, fmt.Errorf("get dns failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
 }

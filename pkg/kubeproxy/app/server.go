@@ -75,12 +75,12 @@ func (ps *ProxyServer) watchApiServer(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (ps *ProxyServer) updateDNS() {
-	//dnsSlice, err := ps.client.GetAllDNS()
-	//if err != nil {
-	//	log.Printf("Failed to get dns: %v", err)
-	//	return
-	//}
-	dnsSlice := getMockDNS()
+	dnsSlice, err := ps.client.GetAllDNS()
+	if err != nil {
+		log.Printf("Failed to get dns: %v", err)
+		return
+	}
+	//dnsSlice := getMockDNS()
 	newMap := make(map[v1.UID]*v1.DNS)
 	for _, dns := range dnsSlice {
 		newMap[dns.ObjectMeta.UID] = dns
@@ -118,18 +118,18 @@ func (ps *ProxyServer) updateDNS() {
 }
 
 func (ps *ProxyServer) updateService() {
-	//pods, err := ps.client.GetAllPods()
-	//if err != nil {
-	//	log.Printf("Failed to get pods: %v", err)
-	//	return
-	//}
-	//services, err := ps.client.GetAllServices()
-	//if err != nil {
-	//	log.Printf("Failed to get services: %v", err)
-	//	return
-	//}
-	pods := getMockPods()
-	services := getMockServices()
+	pods, err := ps.client.GetAllPods()
+	if err != nil {
+		log.Printf("Failed to get pods: %v", err)
+		return
+	}
+	services, err := ps.client.GetAllServices()
+	if err != nil {
+		log.Printf("Failed to get services: %v", err)
+		return
+	}
+	//pods := getMockPods()
+	//services := getMockServices()
 
 	newMap := make(map[v1.UID]*types.ServiceAndEndpoints)
 	for _, service := range services {
