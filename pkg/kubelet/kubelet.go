@@ -132,6 +132,11 @@ func (kl *Kubelet) DoCleanUp() {
 	log.Println("Kubelet cleanup started.")
 	// TODO 停止各种组件
 	kl.pleg.Stop()
+	// unregister node
+	err := kl.kubeClient.UnregisterNode(kl.nodeName)
+	if err != nil {
+		log.Printf("Failed to unregister node %v: %v\n", kl.nodeName, err)
+	}
 	log.Println("Kubelet cleanup ended.")
 }
 

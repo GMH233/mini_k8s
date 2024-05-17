@@ -1248,11 +1248,30 @@ func (s *kubeApiServer) SchedulePodToNodeHandler(c *gin.Context) {
 		return
 	}
 
+	res, err := s.store_cli.GetSubKeysValues("/registry/host-nodes")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	for k, v := range res {
+		if v == podUid {
+			err = s.store_cli.Delete(k)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
+					Error: "error in deleting old node-pod mapping from etcd",
+				})
+				return
+			}
+		}
+	}
+
 	nodePodKey := fmt.Sprintf("/registry/host-nodes/%s/pods/%s_%s", nodeName, pod.Namespace, pod.Name)
 	err = s.store_cli.Set(nodePodKey, podUid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
-			Error: "error in writing node-pod mapping to etcd",
+			Error: "error in writing new node-pod mapping to etcd",
 		})
 		return
 	}
