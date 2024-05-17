@@ -75,7 +75,7 @@ func main() {
 			},
 		},
 	}
-	runtimeManager := runtime.NewRuntimeManager()
+	runtimeManager := runtime.NewRuntimeManager("1.1.1.1")
 	err := runtimeManager.AddPod(pod1)
 	if err != nil {
 		panic(err)
