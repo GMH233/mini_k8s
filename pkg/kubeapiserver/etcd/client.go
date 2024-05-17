@@ -41,7 +41,7 @@ type Store interface {
 	// // 设置key的子key的值
 	// SetSubKeysValues(key string, values map[string]string) error
 	// // 删除key的子key
-	// DeleteSubKeys(key string) error
+	DeleteSubKeys(key string) error
 
 	// TODO: watch 连接
 }
@@ -133,4 +133,14 @@ func (s *store) GetSubKeysValues(key string) (map[string]string, error) {
 
 	return values, nil
 
+}
+
+func (s *store) DeleteSubKeys(key string) error {
+	kv := cliv3.NewKV(s.cli)
+	_, err := kv.Delete(context.TODO(), key, cliv3.WithPrefix())
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
