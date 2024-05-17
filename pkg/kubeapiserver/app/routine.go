@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 	"net"
+	"strings"
 
 	"net/http"
 	"time"
@@ -56,6 +58,10 @@ const (
 	AllServicesURL       = "/api/v1/services"
 	NamespaceServicesURL = "/api/v1/namespaces/:namespace/services"
 	SingleServiceURL     = "/api/v1/namespaces/:namespace/services/:servicename"
+
+	AllDNSURL       = "/api/v1/dns"
+	NamespaceDNSURL = "/api/v1/namespaces/:namespace/dns"
+	SingleDNSURL    = "/api/v1/namespaces/:namespace/dns/:dnsname"
 
 	RegisterNodeURL    = "/api/v1/nodes/register"
 	UnregisterNodeURL  = "/api/v1/nodes/unregister"
@@ -164,6 +170,10 @@ func (ser *kubeApiServer) binder() {
 	ser.router.GET(AllServicesURL, ser.GetAllServicesHandler)
 	ser.router.POST(NamespaceServicesURL, ser.AddServiceHandler)
 	ser.router.DELETE(SingleServiceURL, ser.DeleteServiceHandler)
+
+	ser.router.GET(AllDNSURL, ser.GetAllDNSHandler)
+	ser.router.POST(NamespaceDNSURL, ser.AddDNSHandler)
+	ser.router.DELETE(SingleDNSURL, ser.DeleteDNSHandler)
 
 	ser.router.GET(AllNodesURL, ser.GetAllNodesHandler)
 	ser.router.POST(RegisterNodeURL, ser.RegisterNodeHandler)
@@ -855,13 +865,6 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 		})
 		return
 	}
-	err = s.checkTypeAndPorts(&service)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
-			Error: err.Error(),
-		})
-		return
-	}
 
 	namespace := c.Param("namespace")
 	if namespace == "" {
@@ -891,9 +894,17 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 
 	// 检查service是否已经存在
 	result, err := s.store_cli.Get(namespaceSvcKey)
-	if err != nil || result != "" {
+	if err == nil && result != "" {
 		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Service]{
 			Error: fmt.Sprintf("service %s/%s already exists", namespace, service.Name),
+		})
+		return
+	}
+
+	err = s.checkTypeAndPorts(&service)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: err.Error(),
 		})
 		return
 	}
@@ -1045,6 +1056,309 @@ func (s *kubeApiServer) DeleteServiceHandler(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.Service]{
 		Data: &service,
+	})
+}
+
+func (s *kubeApiServer) getAllDNSFromEtcd() ([]*v1.DNS, error) {
+	allDNSKey := "/registry/dns"
+	res, err := s.store_cli.GetSubKeysValues(allDNSKey)
+	if err != nil {
+		return nil, err
+	}
+	dnsSlice := make([]*v1.DNS, 0)
+	for _, v := range res {
+		var dns v1.DNS
+		err = json.Unmarshal([]byte(v), &dns)
+		if err != nil {
+			return nil, err
+		}
+		dnsSlice = append(dnsSlice, &dns)
+	}
+	return dnsSlice, nil
+}
+
+func (s *kubeApiServer) GetAllDNSHandler(c *gin.Context) {
+	allDNS, err := s.getAllDNSFromEtcd()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.DNS]{
+			Error: fmt.Sprintf("error in reading all dns from etcd: %v", err),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.DNS]{
+		Data: allDNS,
+	})
+}
+
+func (s *kubeApiServer) validateDNS(dns *v1.DNS, urlNamespace string) error {
+	if dns.Name == "" {
+		return fmt.Errorf("dns name is required")
+	}
+	if dns.Namespace == "" {
+		if urlNamespace != "default" {
+			return fmt.Errorf("namespace mismatch, spec: empty(using default), url: %s", urlNamespace)
+		}
+	} else {
+		if dns.Namespace != urlNamespace {
+			return fmt.Errorf("namespace mismatch, spec: %s, url: %s", dns.Namespace, urlNamespace)
+		}
+	}
+	if dns.Kind != "DNS" {
+		return fmt.Errorf("invalid api object kind")
+	}
+	if len(dns.Spec.Rules) == 0 {
+		return fmt.Errorf("no rules for this dns")
+	}
+	for _, rule := range dns.Spec.Rules {
+		if rule.Host == "" {
+			return fmt.Errorf("host cannot be empty")
+		}
+		for _, path := range rule.Paths {
+			if path.Path == "" {
+				return fmt.Errorf("path cannot be empty")
+			}
+			if path.Backend.Service.Name == "" {
+				return fmt.Errorf("service name cannot be empty")
+			}
+			if path.Backend.Service.Port < v1.PortMin || path.Backend.Service.Port > v1.PortMax {
+				return fmt.Errorf("invalid service port %d", path.Backend.Service.Port)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *kubeApiServer) AddDNSHandler(c *gin.Context) {
+	var dns v1.DNS
+	err := c.ShouldBind(&dns)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: "invalid dns json",
+		})
+		return
+	}
+	namespace := c.Param("namespace")
+	if namespace == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: "namespace is required",
+		})
+		return
+	}
+
+	// 参数校验
+	err = s.validateDNS(&dns, namespace)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: err.Error(),
+		})
+		return
+	}
+	dns.Namespace = namespace
+
+	// 检查dns是否已经存在
+	namespaceDNSKey := fmt.Sprintf("/registry/%s/dns/%s", dns.Namespace, dns.Name)
+	uid, err := s.store_cli.Get(namespaceDNSKey)
+	if err == nil && uid != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.DNS]{
+			Error: fmt.Sprintf("dns %s/%s already exists", dns.Namespace, dns.Name),
+		})
+		return
+	}
+
+	// 检查域名冲突
+	hostKey := "/registry/hosts"
+	hosts, err := s.store_cli.Get(hostKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in reading hosts from etcd",
+		})
+		return
+	}
+	hostMap := make(map[string]struct{})
+	scanner := bufio.NewScanner(strings.NewReader(hosts))
+	for scanner.Scan() {
+		hostMap[scanner.Text()] = struct{}{}
+	}
+	for _, rule := range dns.Spec.Rules {
+		if _, ok := hostMap[rule.Host]; ok {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+				Error: fmt.Sprintf("host %s conflicts with existing host", rule.Host),
+			})
+			return
+		}
+		hosts += rule.Host + "\n"
+	}
+
+	// 检查每个path的service backend是否存在
+	for _, rule := range dns.Spec.Rules {
+		for _, path := range rule.Paths {
+			svcName := path.Backend.Service.Name
+			namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, svcName)
+			uid, err := s.store_cli.Get(namespaceSvcKey)
+			if err != nil || uid == "" {
+				c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+					Error: fmt.Sprintf("service %s/%s not found", namespace, svcName),
+				})
+				return
+			}
+			allSvcKey := fmt.Sprintf("/registry/services/%s", uid)
+			svcJson, err := s.store_cli.Get(allSvcKey)
+			if err != nil || svcJson == "" {
+				c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+					Error: "error in reading service from etcd",
+				})
+				return
+			}
+			var svc v1.Service
+			err = json.Unmarshal([]byte(svcJson), &svc)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+					Error: "error in json unmarshal",
+				})
+				return
+			}
+			isPortMatched := false
+			for _, port := range svc.Spec.Ports {
+				if port.Port == path.Backend.Service.Port {
+					isPortMatched = true
+					break
+				}
+			}
+			if !isPortMatched {
+				c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+					Error: fmt.Sprintf("service %s does not have port %d", svcName, path.Backend.Service.Port),
+				})
+				return
+			}
+		}
+	}
+
+	// now create it!
+	dns.CreationTimestamp = timestamp.NewTimestamp()
+	dns.UID = v1.UID(uuid.NewUUID())
+
+	// 存hosts
+	err = s.store_cli.Set(hostKey, hosts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing hosts to etcd",
+		})
+		return
+	}
+
+	// 存uuid
+	err = s.store_cli.Set(namespaceDNSKey, string(dns.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+
+	// 存dns json
+	allDNSKey := fmt.Sprintf("/registry/dns/%s", dns.UID)
+	dnsJson, err := json.Marshal(dns)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	err = s.store_cli.Set(allDNSKey, string(dnsJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.DNS]{
+		Data: &dns,
+	})
+}
+
+func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
+	namespace := c.Param("namespace")
+	dnsName := c.Param("dnsname")
+	if namespace == "" || dnsName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: "namespace and dns name cannot be empty",
+		})
+		return
+	}
+	namespaceDNSKey := fmt.Sprintf("/registry/%s/dns/%s", namespace, dnsName)
+	uid, err := s.store_cli.Get(namespaceDNSKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.DNS]{
+			Error: fmt.Sprintf("dns %s/%s not found", namespace, dnsName),
+		})
+		return
+	}
+
+	allDNSKey := fmt.Sprintf("/registry/dns/%s", uid)
+	dnsJson, err := s.store_cli.Get(allDNSKey)
+	if err != nil || dnsJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in reading dns from etcd",
+		})
+		return
+	}
+
+	var dns v1.DNS
+	err = json.Unmarshal([]byte(dnsJson), &dns)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	// 删除host
+	hostKey := "/registry/hosts"
+	hosts, err := s.store_cli.Get(hostKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in reading hosts from etcd",
+		})
+		return
+	}
+	hostsToDelete := make(map[string]struct{})
+	for _, rule := range dns.Spec.Rules {
+		hostsToDelete[rule.Host] = struct{}{}
+	}
+	scanner := bufio.NewScanner(strings.NewReader(hosts))
+	newHosts := ""
+	for scanner.Scan() {
+		host := scanner.Text()
+		if _, ok := hostsToDelete[host]; !ok {
+			newHosts += host + "\n"
+		}
+	}
+	err = s.store_cli.Set(hostKey, newHosts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing hosts to etcd",
+		})
+		return
+	}
+
+	// 删除dns
+	err = s.store_cli.Delete(namespaceDNSKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in deleting dns from etcd",
+		})
+		return
+	}
+	err = s.store_cli.Delete(allDNSKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in deleting dns from etcd",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.DNS]{
+		Data: &dns,
 	})
 }
 

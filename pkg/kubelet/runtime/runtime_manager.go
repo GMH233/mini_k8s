@@ -31,8 +31,9 @@ type RuntimeManager interface {
 }
 
 type runtimeManager struct {
-	lock  sync.Mutex
-	IpMap map[v1.UID]string
+	lock         sync.Mutex
+	IpMap        map[v1.UID]string
+	nameserverIP string
 }
 
 func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
@@ -122,9 +123,10 @@ func (rm *runtimeManager) getPodContainers(PodName string) ([]*ContainerStatus, 
 	return ret, nil
 }
 
-func NewRuntimeManager() RuntimeManager {
+func NewRuntimeManager(nameserverIP string) RuntimeManager {
 	manager := &runtimeManager{}
 	manager.IpMap = make(map[v1.UID]string)
+	manager.nameserverIP = nameserverIP
 	return manager
 }
 
@@ -192,6 +194,7 @@ func (rm *runtimeManager) CreatePauseContainer(pod *v1.Pod) (string, error) {
 		ExposedPorts: rm.getExposedPorts(pod.Spec.Containers),
 	}, &container.HostConfig{
 		PortBindings: make(nat.PortMap),
+		DNS:          []string{rm.nameserverIP},
 	}, nil, nil, "")
 	if err != nil {
 		panic(err)

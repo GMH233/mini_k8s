@@ -21,15 +21,22 @@ type Kubelet struct {
 	kubeClient     client.KubeletClient
 	runtimeManager runtime.RuntimeManager
 	cache          runtime.Cache
+	nameserverIP   string
 }
 
 func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet, error) {
 	kl := &Kubelet{}
 
+	nameserverIP, err := runtime.GetContainerBridgeIP("coredns")
+	if err != nil {
+		return nil, err
+	}
+	kl.nameserverIP = nameserverIP
+
 	kl.nodeName = nodeName
 	kl.podManger = kubepod.NewPodManager()
 	kl.kubeClient = kubeClient
-	kl.runtimeManager = runtime.NewRuntimeManager()
+	kl.runtimeManager = runtime.NewRuntimeManager(nameserverIP)
 	kl.cache = runtime.NewCache()
 	kl.pleg = pleg.NewPLEG(kl.runtimeManager, kl.cache)
 	kl.podWorkers = NewPodWorkers(kl, kl.cache)

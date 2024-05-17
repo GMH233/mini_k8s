@@ -205,6 +205,52 @@ const (
 	ProtocolUDP Protocol = "udp"
 )
 
+type DNS struct {
+	TypeMeta `json:",inline"`
+
+	ObjectMeta `json:"metadata,omitempty"`
+
+	Spec DNSSpec `json:"spec,omitempty"`
+
+	Status DNSStatus `json:"status,omitempty"`
+}
+
+//spec:
+//	rules:
+//	- host: mywebsite.com
+//	  paths:
+//    - path: /demo
+//		backend:
+//		  service:
+//			name: myservice
+//			port: 8080
+
+type DNSSpec struct {
+	Rules []DNSRule `json:"rules,omitempty"`
+}
+
+type DNSRule struct {
+	Host  string    `json:"host,omitempty"`
+	Paths []DNSPath `json:"paths,omitempty"`
+}
+
+type DNSPath struct {
+	Path    string     `json:"path,omitempty"`
+	Backend DNSBackend `json:"backend,omitempty"`
+}
+
+type DNSBackend struct {
+	Service DNSServiceBackend `json:"service,omitempty"`
+}
+
+type DNSServiceBackend struct {
+	Name string `json:"name,omitempty"`
+	Port int32  `json:"port,omitempty"`
+}
+
+type DNSStatus struct {
+}
+
 type Node struct {
 	TypeMeta   `json:",inline"`
 	ObjectMeta `json:"metadata,omitempty"`
