@@ -204,3 +204,18 @@ const (
 	ProtocolTCP Protocol = "tcp"
 	ProtocolUDP Protocol = "udp"
 )
+
+type Node struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+	Spec       NodeSpec   `json:"spec,omitempty"`
+	Status     NodeStatus `json:"status,omitempty"`
+}
+
+type NodeSpec struct {
+}
+
+type NodeStatus struct {
+	// IP地址
+	Address string `json:"address,omitempty"`
+}
