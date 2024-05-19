@@ -75,8 +75,8 @@ const (
 	NamespaceReplicaSetsURL = "/api/v1/namespaces/:namespace/replicasets"
 	SingleReplicaSetURL     = "/api/v1/namespaces/:namespace/replicasets/:replicasetname"
 
-	StatsDataURL         = "/api/v1/stats/data/type/:type"
-	AllScalingURL        = "/api/v1/scaling/type/:type"
+	StatsDataURL         = "/api/v1/stats/data"
+	AllScalingURL        = "/api/v1/scaling/"
 	NamespaceScalingsURL = "/api/v1/scaling/type/:type/namespaces/:namespace"
 	SingleScalingURL     = "/api/v1/scaling/type/:type/namespaces/:namespace/name/:name"
 )
@@ -225,6 +225,7 @@ func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
 	data, err := s.metrics_cli.GetPodMetrics(query.UID, query.TimeStamp, query.Window)
 
 	if err != nil {
+		log.Printf("error in getting metrics: %v", err)
 		c.JSON(http.StatusInternalServerError,
 			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: fmt.Sprintf("error in getting metrics: %v", err)},
 		)

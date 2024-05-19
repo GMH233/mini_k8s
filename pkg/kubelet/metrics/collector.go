@@ -3,6 +3,7 @@ package metrics // test
 import (
 	"bytes"
 	"fmt"
+	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeclient"
 	"minikubernetes/pkg/kubelet/runtime"
@@ -47,7 +48,7 @@ func NewMetricsCollector() MetricsCollector {
 	// 创建一个新的MetricsCollector
 	var newMetricsCollector MetricsCollector
 	newMetricsCollector = &metricsCollector{
-		ip:   "localhost",
+		ip:   "127.0.0.1",
 		port: 8090,
 	}
 	return newMetricsCollector
@@ -75,35 +76,39 @@ func (mc *metricsCollector) Run() {
 	// 运行MetricsCollector
 	mc.init()
 
-	const interval int = 10
-	syncTicker := time.NewTicker(time.Duration(interval) * time.Second)
-	defer syncTicker.Stop()
+	const interval int = 5
 
 	// 定期检查cadvisor是否存活
-
-	select {
-	case <-syncTicker.C:
-		err := mc.CheckAlive()
-		if err != nil {
-			// 尝试启动cadvisor
-			mc.tryStartCAdvisor()
-		} else {
-			if mc.podStats != nil {
-
-				// 获取容器指标
-				curMetrics, err := mc.getMetrics()
+	go func() {
+		syncTicker := time.NewTicker(time.Duration(interval) * time.Second)
+		defer syncTicker.Stop()
+		for {
+			select {
+			case <-syncTicker.C:
+				err := mc.CheckAlive()
 				if err != nil {
-					fmt.Printf("get metrics err: %v", err.Error())
-				}
+					// 尝试启动cadvisor
+					fmt.Printf(err.Error())
+					mc.tryStartCAdvisor()
+				} else {
+					if mc.podStats != nil {
 
-				// 上传指标
-				err = mc.uploadMetrics(curMetrics)
-				if err != nil {
-					fmt.Printf("upload metrics err: %v", err.Error())
+						// 获取容器指标
+						curMetrics, err := mc.getMetrics()
+						if err != nil {
+							fmt.Printf("get metrics err: %v", err.Error())
+						}
+						log.Printf("metrics to be uploaded: %v", curMetrics)
+						// 上传指标
+						err = mc.uploadMetrics(curMetrics)
+						if err != nil {
+							fmt.Printf("upload metrics err: %v", err.Error())
+						}
+					}
 				}
 			}
 		}
-	}
+	}()
 
 }
 
@@ -120,6 +125,8 @@ func (mc *metricsCollector) init() {
 	if err != nil {
 		fmt.Printf("init cadvisor client err: %v", err.Error())
 	}
+
+	mc.kube_cli = kubeclient.NewClient("192.168.1.10")
 	mc.podStats = nil
 
 }
@@ -127,7 +134,11 @@ func (mc *metricsCollector) init() {
 func (mc *metricsCollector) SetPodInfo(podStats []*runtime.PodStatus) {
 	// 由kubelet设置pod信息
 	// 注意是Pod 到 容器非人的字符串 的映射
+	log.Printf("set pod info: %v", podStats)
 	mc.podStatsLock.Lock()
+	if mc.podStats == nil {
+		mc.podStats = make([]*runtime.PodStatus, 0)
+	}
 	mc.podStats = podStats
 	mc.podStatsLock.Unlock()
 }
@@ -155,6 +166,7 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 		var podMetrics v1.PodRawMetrics
 		podId := podStat.ID
 		podMetrics.UID = podId
+		podMetrics.ContainerInfo = make(map[string][]v1.PodRawMetricsItem)
 
 		// 对于每一个容器
 		for _, container := range podStat.ContainerStatuses {
@@ -168,15 +180,16 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 			if _, ok := podMetrics.ContainerInfo[dockerId]; !ok {
 				podMetrics.ContainerInfo[dockerId] = make([]v1.PodRawMetricsItem, 0)
 			}
+			var PrefixDockerId string = fmt.Sprintf("/docker/%s", container.ID)
+			MapPfxIdStats, err := mc.cad_client.Stats(PrefixDockerId, &request)
 
-			sInfo, err := mc.cad_client.Stats(dockerId, &request)
 			if err != nil {
 				fmt.Printf("get container info err: %v", err.Error())
 			}
 			// fmt.Printf("container info: %v\n", sInfo)
 			// sInfo的key是dockerId
 			// 这样就可以获得cpu瞬时的占用率了,total_usage以nano core为单位.
-			for _, item := range sInfo[dockerId].Stats {
+			for _, item := range MapPfxIdStats[PrefixDockerId].Stats {
 				var cMetricItem v1.PodRawMetricsItem
 				// 第一个item必然是nil
 				if item.CpuInst == nil || item.Memory == nil {
@@ -258,13 +271,14 @@ func (mc *metricsCollector) CheckAlive() error {
 	}
 
 	// 检查是否能够获取端口信息
-	cmd = exec.Command("nc", "-vz", mc.ip, string(mc.port))
+	cmd = exec.Command("nc", "-vz", mc.ip, fmt.Sprintf("%d", mc.port))
+	stdout.Reset()
+	stderr.Reset()
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	err = cmd.Run()
 	if err != nil {
-		return fmt.Errorf("ping cadvisor err: %v", err.Error())
-	}
-	if !strings.Contains(stdout.String(), "succeeded") {
-		return fmt.Errorf("cannot connect to cadvisor")
+		return fmt.Errorf("ping cadvisor err: %v, %v , %v", err.Error(), stderr.String(), stdout.String())
 	}
 	return nil
 }

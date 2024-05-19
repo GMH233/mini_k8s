@@ -105,6 +105,7 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 	case <-syncCh:
 		// TODO 定时同步Pod信息到metrics collector
 		allPods, err := kl.runtimeManager.GetAllPods()
+		log.Printf("allPods: %v\n", allPods)
 		if err != nil {
 			log.Printf("Failed to get all pods: %v\n", err)
 			return true
@@ -112,6 +113,7 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 		// 由allPods取到所有的status
 		var podStatusList []*runtime.PodStatus
 		for _, pod := range allPods {
+			log.Printf("pod: %v\n", pod)
 			podStatus, err := kl.runtimeManager.GetPodStatus(pod.ID, pod.Name, pod.Namespace)
 			if err != nil {
 				log.Printf("Failed to get pod %v status: %v\n", pod.Name, err)

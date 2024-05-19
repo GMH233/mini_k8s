@@ -220,23 +220,21 @@ func (c *client) AddPodToNode(pod v1.Pod, node v1.Node) error {
 }
 
 func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
-	url := fmt.Sprintf("http://%s:8001/api/v1/stats/data/type/%s", c.apiServerIP, "pod")
+	url := fmt.Sprintf("http://%s:8001/api/v1/stats/data", c.apiServerIP)
 
-	metricsJson, err := json.Marshal(metrics)
+	metricsStr, _ := json.Marshal(metrics)
+
+	fmt.Printf("upload metrics str: %s\n", string(metricsStr))
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsStr))
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsJson))
-	if err != nil {
-		return err
-	}
-	req.Header.Add("Content-Type", "application/json")
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
-
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("upload metrics failed, statusCode: %d", resp.StatusCode)
 	}
