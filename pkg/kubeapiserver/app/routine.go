@@ -11,6 +11,7 @@ import (
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 	"net"
+	"sort"
 	"strings"
 
 	"net/http"
@@ -68,6 +69,10 @@ const (
 	AllNodesURL        = "/api/v1/nodes"
 	SchedulePodURL     = "/api/v1/schedule"
 	UnscheduledPodsURL = "/api/v1/pods/unscheduled"
+
+	AllReplicaSetsURL       = "/api/v1/replicasets"
+	NamespaceReplicaSetsURL = "/api/v1/namespaces/:namespace/replicasets"
+	SingleReplicaSetURL     = "/api/v1/namespaces/:namespace/replicasets/:replicasetname"
 )
 
 /* NAMESPACE
@@ -180,6 +185,10 @@ func (ser *kubeApiServer) binder() {
 	ser.router.POST(UnregisterNodeURL, ser.UnregisterNodeHandler)
 	ser.router.POST(SchedulePodURL, ser.SchedulePodToNodeHandler)
 	ser.router.GET(UnscheduledPodsURL, ser.GetUnscheduledPodHandler)
+
+	ser.router.GET(AllReplicaSetsURL, ser.GetAllReplicaSetsHandler)
+	ser.router.POST(NamespaceReplicaSetsURL, ser.AddReplicaSetHandler)
+	ser.router.DELETE(SingleReplicaSetURL, ser.DeleteReplicaSetHandler)
 }
 
 // handlers (trivial)
@@ -1530,6 +1539,9 @@ func (s *kubeApiServer) GetAllNodesHandler(c *gin.Context) {
 		}
 		nodes = append(nodes, &node)
 	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
 	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Node]{
 		Data: nodes,
 	})
@@ -1625,5 +1637,197 @@ func (s *kubeApiServer) GetUnscheduledPodHandler(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Pod]{
 		Data: unscheduledPods,
+	})
+}
+
+func (ser *kubeApiServer) GetAllReplicaSetsHandler(con *gin.Context) {
+	log.Println("GetAllReplicaSets")
+	all_replicaset_str := make([]v1.ReplicaSet, 0)
+	prefix := "/registry"
+	all_replicaset_keystr := prefix + "/replicaset"
+
+	res, err := ser.store_cli.GetSubKeysValues(all_replicaset_keystr)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in reading all replicas sets in etcd",
+		})
+		return
+	}
+
+	//namespace_replicaset_keystr := prefix + "/namespace/" + Default_Namespace + "/replicasets/"
+	//
+	//res2, err2 := ser.store_cli.Get(namespace_replicaset_keystr)
+	//if err2 != nil {
+	//	log.Println("replica set name already exists")
+	//	con.JSON(http.StatusConflict, gin.H{
+	//		"error": "replica set name already exists",
+	//	})
+	//	return
+	//}
+	//for k, v := range res2 {
+	//	println("-----------------------------------")
+	//	println(k)
+	//	println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+	//	println(v)
+	//
+	//}
+
+	if len(res) == 0 {
+		con.JSON(http.StatusOK, v1.BaseResponse[[]*v1.ReplicaSet]{Data: nil})
+		return
+	}
+
+	for _, v := range res {
+		var rps v1.ReplicaSet
+		err = json.Unmarshal([]byte(v), &rps)
+		if err != nil {
+			log.Println("error in json unmarshal")
+			con.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error in json unmarshal",
+			})
+			return
+		}
+		println(rps.UID)
+		all_replicaset_str = append(all_replicaset_str, rps)
+	}
+
+	con.JSON(http.StatusOK,
+		gin.H{
+			"data": all_replicaset_str,
+		},
+	)
+}
+
+func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
+	log.Println("Adding a new replica set")
+	var rps v1.ReplicaSet
+	err := con.ShouldBind(&rps)
+	if err != nil {
+		log.Panicln("something is wrong when parsing replica set")
+		return
+	}
+	rps_name := rps.ObjectMeta.Name
+	if rps_name == "" {
+		rps_name = Default_Podname
+	}
+
+	rps_label := rps.Spec.Selector.MatchLabels
+	if rps_label == nil {
+		con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "replica set labels are required",
+		})
+		return
+	}
+
+	//rps_template := rps.Template
+	//if rps_template == empty {
+	//	con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+	//		Error: "replica set template is required",
+	//	})
+	//	return
+	//}
+
+	rps.ObjectMeta.UID = (v1.UID)(uuid.NewUUID())
+	rps.ObjectMeta.CreationTimestamp = timestamp.NewTimestamp()
+	prefix := "/registry"
+
+	all_replicaset_keystr := prefix + "/replicaset/" + string(rps.ObjectMeta.UID)
+	namespace_replicaset_keystr := prefix + "/namespace/" + Default_Namespace + "/replicasets/" + rps_name
+
+	res, err := ser.store_cli.Get(namespace_replicaset_keystr)
+	if res != "" || err != nil {
+		log.Println("replica set name already exists")
+		con.JSON(http.StatusConflict, gin.H{
+			"error": "replica set name already exists",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(namespace_replicaset_keystr, string(rps.ObjectMeta.UID))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
+
+	rps_str, err := json.Marshal(rps)
+
+	if err != nil {
+		log.Println("error in json marshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json marshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(all_replicaset_keystr, string(rps_str))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
+
+	con.JSON(http.StatusCreated, gin.H{
+		"message": "successfully created replica set",
+		"UUID":    rps.ObjectMeta.UID,
+	})
+
+}
+
+func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
+	namespace := con.Param("namespace")
+	rpsName := con.Param("replicasetname")
+	if namespace == "" || rpsName == "" {
+		con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "namespace and replica set name cannot be empty",
+		})
+		return
+	}
+	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", Default_Namespace, rpsName)
+	uid, err := ser.store_cli.Get(namespaceRpsKey)
+	if err != nil || uid == "" {
+		con.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: fmt.Sprintf("replica set %s/%s not found", namespace, rpsName),
+		})
+		return
+	}
+
+	allRpsKey := fmt.Sprintf("/registry/replicaset/%s", uid)
+	rpsJson, err := ser.store_cli.Get(allRpsKey)
+	if err != nil || rpsJson == "" {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in reading replica set from etcd",
+		})
+		return
+	}
+	var rps v1.ReplicaSet
+	err = json.Unmarshal([]byte(rpsJson), &rps)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Delete(namespaceRpsKey)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in deleting replica set from etcd",
+		})
+		return
+	}
+	err = ser.store_cli.Delete(allRpsKey)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in deleting replica set from etcd",
+		})
+		return
+	}
+	con.JSON(http.StatusOK, v1.BaseResponse[*v1.ReplicaSet]{
+		Data: &rps,
 	})
 }
