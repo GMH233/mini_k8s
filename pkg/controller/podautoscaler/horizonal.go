@@ -1,10 +1,13 @@
 package podautoscaler
 
-type HorizontalController struct {
-}
+import (
+	// "minikubernetes/pkg/api/v1"
+	"minikubernetes/pkg/kubeclient"
+)
 
-// 目前直接从collector中获取信息
-// 之后可以从apiserver的metrics接口获取
+type HorizontalController struct {
+	kube_cli kubeclient.Client
+}
 
 // 策略函数
 func (hc *HorizontalController) Strategy() {
@@ -13,7 +16,12 @@ func (hc *HorizontalController) Strategy() {
 
 // 向apiserver发送请求改变pod数量
 
-// 从collector中获取信息
+// 从apiServer中获取统计的信息
 func GetPodMetrics() {
+
+}
+
+// 从apiServer中获取HorizontalPodAutoscaler的信息
+func GetAutoscalers() {
 
 }
