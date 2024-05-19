@@ -5,6 +5,7 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubelet/client"
+	kubemetrics "minikubernetes/pkg/kubelet/metrics"
 	"minikubernetes/pkg/kubelet/pleg"
 	kubepod "minikubernetes/pkg/kubelet/pod"
 	"minikubernetes/pkg/kubelet/runtime"
@@ -23,6 +24,9 @@ type Kubelet struct {
 	kubeClient     client.KubeletClient
 	runtimeManager runtime.RuntimeManager
 	cache          runtime.Cache
+
+	// metrics collector
+	metricsCollector kubemetrics.MetricsCollector
 }
 
 func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet, error) {
@@ -36,6 +40,8 @@ func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet,
 	kl.pleg = pleg.NewPLEG(kl.runtimeManager, kl.cache)
 	kl.podWorkers = NewPodWorkers(kl, kl.cache)
 
+	kl.metricsCollector = kubemetrics.NewMetricsCollector()
+	kl.metricsCollector.Run()
 	log.Println("Kubelet initialized.")
 	return kl, nil
 }
@@ -91,14 +97,24 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 		kl.HandlePodLifecycleEvent(pod, e)
 	case <-syncCh:
 		// TODO 定时同步Pod信息到metrics collector
-		allPods := kl.podManger.GetPods()
-
-		// 取到uid
-		// 从cache中取到pod对应的container id
+		allPods, err := kl.runtimeManager.GetAllPods()
+		if err != nil {
+			log.Printf("Failed to get all pods: %v\n", err)
+			return true
+		}
+		// 由allPods取到所有的status
+		var podStatusList []*runtime.PodStatus
+		for _, pod := range allPods {
+			podStatus, err := kl.runtimeManager.GetPodStatus(pod.ID, pod.Name, pod.Namespace)
+			if err != nil {
+				log.Printf("Failed to get pod %v status: %v\n", pod.Name, err)
+				continue
+			}
+			podStatusList = append(podStatusList, podStatus)
+		}
 
 		// 调用metrics collector的接口
-
-		return true
+		kl.metricsCollector.SetPodInfo(podStatusList)
 
 	case <-ctx.Done():
 		// 人为停止

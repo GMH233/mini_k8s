@@ -1,6 +1,7 @@
 package kubeclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 type Client interface {
 	GetAllServices() ([]*v1.Service, error)
 	GetAllPods() ([]*v1.Pod, error)
+
+	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
 }
 
 type client struct {
@@ -64,4 +67,29 @@ func (c *client) GetAllPods() ([]*v1.Pod, error) {
 		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
+}
+
+func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
+	url := fmt.Sprintf("http://%s:8001/api/v1/stats/data/type/%s", c.apiServerIP, "pod")
+
+	metricsJson, err := json.Marshal(metrics)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("upload metrics failed, statusCode: %d", resp.StatusCode)
+	}
+
+	return nil
 }
