@@ -24,6 +24,7 @@ type Kubelet struct {
 	kubeClient     client.KubeletClient
 	runtimeManager runtime.RuntimeManager
 	cache          runtime.Cache
+	nameserverIP   string
 
 	// metrics collector
 	metricsCollector kubemetrics.MetricsCollector
@@ -32,10 +33,16 @@ type Kubelet struct {
 func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet, error) {
 	kl := &Kubelet{}
 
+	nameserverIP, err := runtime.GetContainerBridgeIP("coredns")
+	if err != nil {
+		return nil, err
+	}
+	kl.nameserverIP = nameserverIP
+
 	kl.nodeName = nodeName
 	kl.podManger = kubepod.NewPodManager()
 	kl.kubeClient = kubeClient
-	kl.runtimeManager = runtime.NewRuntimeManager()
+	kl.runtimeManager = runtime.NewRuntimeManager(nameserverIP)
 	kl.cache = runtime.NewCache()
 	kl.pleg = pleg.NewPLEG(kl.runtimeManager, kl.cache)
 	kl.podWorkers = NewPodWorkers(kl, kl.cache)
@@ -163,6 +170,11 @@ func (kl *Kubelet) DoCleanUp() {
 	log.Println("Kubelet cleanup started.")
 	// TODO 停止各种组件
 	kl.pleg.Stop()
+	// unregister node
+	err := kl.kubeClient.UnregisterNode(kl.nodeName)
+	if err != nil {
+		log.Printf("Failed to unregister node %v: %v\n", kl.nodeName, err)
+	}
 	log.Println("Kubelet cleanup ended.")
 }
 

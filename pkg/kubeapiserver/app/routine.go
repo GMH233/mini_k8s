@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,9 @@ import (
 	"minikubernetes/pkg/kubeapiserver/utils"
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
+	"net"
+	"sort"
+	"strings"
 
 	"net/http"
 	"time"
@@ -39,6 +43,38 @@ import (
 	   Handle:
 	   Now in KubeApiServer
 */
+
+/* URL Consts
+ */
+const (
+	All_nodes_url   = "/api/v1/node"
+	Node_status_url = "/api/v1/nodes/:nodename/status"
+
+	All_pods_url       = "/api/v1/pods"
+	Namespace_Pods_url = "/api/v1/namespaces/:namespace/pods"
+	Single_pod_url     = "/api/v1/namespaces/:namespace/pods/:podname"
+	Pod_status_url     = "/api/v1/namespaces/:namespace/pods/:podname/status"
+
+	Node_pods_url = "/api/v1/nodes/:nodename/pods"
+
+	AllServicesURL       = "/api/v1/services"
+	NamespaceServicesURL = "/api/v1/namespaces/:namespace/services"
+	SingleServiceURL     = "/api/v1/namespaces/:namespace/services/:servicename"
+
+	AllDNSURL       = "/api/v1/dns"
+	NamespaceDNSURL = "/api/v1/namespaces/:namespace/dns"
+	SingleDNSURL    = "/api/v1/namespaces/:namespace/dns/:dnsname"
+
+	RegisterNodeURL    = "/api/v1/nodes/register"
+	UnregisterNodeURL  = "/api/v1/nodes/unregister"
+	AllNodesURL        = "/api/v1/nodes"
+	SchedulePodURL     = "/api/v1/schedule"
+	UnscheduledPodsURL = "/api/v1/pods/unscheduled"
+
+	AllReplicaSetsURL       = "/api/v1/replicasets"
+	NamespaceReplicaSetsURL = "/api/v1/namespaces/:namespace/replicasets"
+	SingleReplicaSetURL     = "/api/v1/namespaces/:namespace/replicasets/:replicasetname"
+)
 
 /* NAMESPACE
  * and NODE HARDSHIT
@@ -117,31 +153,6 @@ func NewKubeApiServer() (KubeApiServer, error) {
 	}, nil
 }
 
-/* URL Consts
- */
-const (
-	All_nodes_url   = "/api/v1/node"
-	Node_status_url = "/api/v1/nodes/:nodename/status"
-
-	All_pods_url       = "/api/v1/pods"
-	Namespace_Pods_url = "/api/v1/namespaces/:namespace/pods"
-	Single_pod_url     = "/api/v1/namespaces/:namespace/pods/:podname"
-	Pod_status_url     = "/api/v1/namespaces/:namespace/pods/:podname/status"
-
-	Node_pods_url = "/api/v1/nodes/:nodename/pods"
-
-	AllServicesURL       = "/api/v1/services"
-	NamespaceServicesURL = "/api/v1/namespaces/:namespace/services"
-	SingleServiceURL     = "/api/v1/namespaces/:namespace/services/:servicename"
-
-	// 内部组件使用
-	StatsDataURL = "/api/v1/stats/data/type/:type"
-
-	AllScalingURL        = "/api/v1/scaling/type/:type"
-	NamespaceScalingsURL = "/api/v1/scaling/type/:type/namespaces/:namespace"
-	SingleScalingURL     = "/api/v1/scaling/type/:type/namespaces/:namespace/name/:name"
-)
-
 // binding Restful requests to urls
 // could initialize with config
 
@@ -172,6 +183,20 @@ func (ser *kubeApiServer) binder() {
 	ser.router.GET(AllServicesURL, ser.GetAllServicesHandler)
 	ser.router.POST(NamespaceServicesURL, ser.AddServiceHandler)
 	ser.router.DELETE(SingleServiceURL, ser.DeleteServiceHandler)
+
+	ser.router.GET(AllDNSURL, ser.GetAllDNSHandler)
+	ser.router.POST(NamespaceDNSURL, ser.AddDNSHandler)
+	ser.router.DELETE(SingleDNSURL, ser.DeleteDNSHandler)
+
+	ser.router.GET(AllNodesURL, ser.GetAllNodesHandler)
+	ser.router.POST(RegisterNodeURL, ser.RegisterNodeHandler)
+	ser.router.POST(UnregisterNodeURL, ser.UnregisterNodeHandler)
+	ser.router.POST(SchedulePodURL, ser.SchedulePodToNodeHandler)
+	ser.router.GET(UnscheduledPodsURL, ser.GetUnscheduledPodHandler)
+
+	ser.router.GET(AllReplicaSetsURL, ser.GetAllReplicaSetsHandler)
+	ser.router.POST(NamespaceReplicaSetsURL, ser.AddReplicaSetHandler)
+	ser.router.DELETE(SingleReplicaSetURL, ser.DeleteReplicaSetHandler)
 
 	ser.router.GET(StatsDataURL, ser.GetStatsDataHandler)
 	ser.router.POST(StatsDataURL, ser.AddStatsDataHandler)
@@ -542,7 +567,7 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	namespace_pod_keystr := prefix + "/namespaces/" + Default_Namespace + "/pods/" + pod_name
 
 	// node里面对应的也是podname和uid的映射
-	node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
+	// node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
 
 	// 首先查看namespace里面是否已经存在
 	res, err := ser.store_cli.Get(namespace_pod_keystr)
@@ -564,14 +589,14 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	}
 
 	// 然后写入node_pod_map
-	err = ser.store_cli.Set(node_pod_keystr, string(pod.ObjectMeta.UID))
-	if err != nil {
-		log.Println("error in writing to etcd")
-		con.JSON(http.StatusInternalServerError, gin.H{
-			"error": "error in writing to etcd",
-		})
-		return
-	}
+	//err = ser.store_cli.Set(node_pod_keystr, string(pod.ObjectMeta.UID))
+	//if err != nil {
+	//	log.Println("error in writing to etcd")
+	//	con.JSON(http.StatusInternalServerError, gin.H{
+	//		"error": "error in writing to etcd",
+	//	})
+	//	return
+	//}
 
 	// 最后写入pod_hub
 	// JSON序列化pod
@@ -614,7 +639,7 @@ func (ser *kubeApiServer) DeletePodHandler(con *gin.Context) {
 
 	namespace_pod_keystr := prefix + "/namespaces/" + np + "/pods/" + pod_name
 
-	node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
+	// node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
 
 	res, err := ser.store_cli.Get(namespace_pod_keystr)
 	// or change return type to DeleteResponse so there is no need to check Get result
@@ -638,24 +663,24 @@ func (ser *kubeApiServer) DeletePodHandler(con *gin.Context) {
 		return
 	}
 
-	res, err = ser.store_cli.Get(node_pod_keystr)
-	// or change return type to DeleteResponse so there is no need to check Get result
-	if res == "" || err != nil {
-		log.Println("pod name does not exist in node")
-		con.JSON(http.StatusNotFound, gin.H{
-			"error": "pod name does not exist in node",
-		})
-		return
-	}
+	//res, err = ser.store_cli.Get(node_pod_keystr)
+	//// or change return type to DeleteResponse so there is no need to check Get result
+	//if res == "" || err != nil {
+	//	log.Println("pod name does not exist in node")
+	//	con.JSON(http.StatusNotFound, gin.H{
+	//		"error": "pod name does not exist in node",
+	//	})
+	//	return
+	//}
 
-	err = ser.store_cli.Delete(node_pod_keystr)
-	if err != nil {
-		log.Println("error in deleting from etcd")
-		con.JSON(http.StatusInternalServerError, gin.H{
-			"error": "error in deleting from etcd",
-		})
-		return
-	}
+	//err = ser.store_cli.Delete(node_pod_keystr)
+	//if err != nil {
+	//	log.Println("error in deleting from etcd")
+	//	con.JSON(http.StatusInternalServerError, gin.H{
+	//		"error": "error in deleting from etcd",
+	//	})
+	//	return
+	//}
 
 	res, err = ser.store_cli.Get(all_pod_keystr)
 	if res == "" || err != nil {
@@ -826,7 +851,7 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 
 	prefix := "/registry"
 
-	node_pod_keystr := prefix + "/nodes/" + node_name + "/pods"
+	node_pod_keystr := prefix + "/host-nodes/" + node_name + "/pods"
 
 	// 以这个前缀去搜索所有的pod
 	// 得调整接口 加一个GetSubKeysValues
@@ -840,18 +865,24 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 		return
 	}
 
+	var keysToDelete []string
 	//res返回的是pod的uid，回到etcd里面找到pod的信息
-	for _, v := range res {
+	for k, v := range res {
 		pod_id := v
 		all_pod_keystr := prefix + "/pods/" + pod_id
 
 		res, err := ser.store_cli.Get(all_pod_keystr)
+		//if res == "" || err != nil {
+		//	log.Println("pod does not exist")
+		//	con.JSON(http.StatusNotFound, gin.H{
+		//		"error": "pod does not exist",
+		//	})
+		//	return
+		//}
 		if res == "" || err != nil {
-			log.Println("pod does not exist")
-			con.JSON(http.StatusNotFound, gin.H{
-				"error": "pod does not exist",
-			})
-			return
+			// lazy deleting
+			keysToDelete = append(keysToDelete, k)
+			continue
 		}
 		var pod v1.Pod
 		err = json.Unmarshal([]byte(res), &pod)
@@ -863,6 +894,10 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 			return
 		}
 		all_pod_str = append(all_pod_str, pod)
+	}
+
+	for _, mapping := range keysToDelete {
+		_ = ser.store_cli.Delete(mapping)
 	}
 
 	// then return all of them
@@ -994,13 +1029,6 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 		})
 		return
 	}
-	err = s.checkTypeAndPorts(&service)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
-			Error: err.Error(),
-		})
-		return
-	}
 
 	namespace := c.Param("namespace")
 	if namespace == "" {
@@ -1030,9 +1058,17 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 
 	// 检查service是否已经存在
 	result, err := s.store_cli.Get(namespaceSvcKey)
-	if err != nil || result != "" {
+	if err == nil && result != "" {
 		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Service]{
 			Error: fmt.Sprintf("service %s/%s already exists", namespace, service.Name),
+		})
+		return
+	}
+
+	err = s.checkTypeAndPorts(&service)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Service]{
+			Error: err.Error(),
 		})
 		return
 	}
@@ -1184,6 +1220,770 @@ func (s *kubeApiServer) DeleteServiceHandler(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.Service]{
 		Data: &service,
+	})
+}
+
+func (s *kubeApiServer) getAllDNSFromEtcd() ([]*v1.DNS, error) {
+	allDNSKey := "/registry/dns"
+	res, err := s.store_cli.GetSubKeysValues(allDNSKey)
+	if err != nil {
+		return nil, err
+	}
+	dnsSlice := make([]*v1.DNS, 0)
+	for _, v := range res {
+		var dns v1.DNS
+		err = json.Unmarshal([]byte(v), &dns)
+		if err != nil {
+			return nil, err
+		}
+		dnsSlice = append(dnsSlice, &dns)
+	}
+	return dnsSlice, nil
+}
+
+func (s *kubeApiServer) GetAllDNSHandler(c *gin.Context) {
+	allDNS, err := s.getAllDNSFromEtcd()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.DNS]{
+			Error: fmt.Sprintf("error in reading all dns from etcd: %v", err),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.DNS]{
+		Data: allDNS,
+	})
+}
+
+func (s *kubeApiServer) validateDNS(dns *v1.DNS, urlNamespace string) error {
+	if dns.Name == "" {
+		return fmt.Errorf("dns name is required")
+	}
+	if dns.Namespace == "" {
+		if urlNamespace != "default" {
+			return fmt.Errorf("namespace mismatch, spec: empty(using default), url: %s", urlNamespace)
+		}
+	} else {
+		if dns.Namespace != urlNamespace {
+			return fmt.Errorf("namespace mismatch, spec: %s, url: %s", dns.Namespace, urlNamespace)
+		}
+	}
+	if dns.Kind != "DNS" {
+		return fmt.Errorf("invalid api object kind")
+	}
+	if len(dns.Spec.Rules) == 0 {
+		return fmt.Errorf("no rules for this dns")
+	}
+	for _, rule := range dns.Spec.Rules {
+		if rule.Host == "" {
+			return fmt.Errorf("host cannot be empty")
+		}
+		for _, path := range rule.Paths {
+			if path.Path == "" {
+				return fmt.Errorf("path cannot be empty")
+			}
+			if path.Backend.Service.Name == "" {
+				return fmt.Errorf("service name cannot be empty")
+			}
+			if path.Backend.Service.Port < v1.PortMin || path.Backend.Service.Port > v1.PortMax {
+				return fmt.Errorf("invalid service port %d", path.Backend.Service.Port)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *kubeApiServer) AddDNSHandler(c *gin.Context) {
+	var dns v1.DNS
+	err := c.ShouldBind(&dns)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: "invalid dns json",
+		})
+		return
+	}
+	namespace := c.Param("namespace")
+	if namespace == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: "namespace is required",
+		})
+		return
+	}
+
+	// 参数校验
+	err = s.validateDNS(&dns, namespace)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: err.Error(),
+		})
+		return
+	}
+	dns.Namespace = namespace
+
+	// 检查dns是否已经存在
+	namespaceDNSKey := fmt.Sprintf("/registry/%s/dns/%s", dns.Namespace, dns.Name)
+	uid, err := s.store_cli.Get(namespaceDNSKey)
+	if err == nil && uid != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.DNS]{
+			Error: fmt.Sprintf("dns %s/%s already exists", dns.Namespace, dns.Name),
+		})
+		return
+	}
+
+	// 检查域名冲突
+	hostKey := "/registry/hosts"
+	hosts, err := s.store_cli.Get(hostKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in reading hosts from etcd",
+		})
+		return
+	}
+	hostMap := make(map[string]struct{})
+	scanner := bufio.NewScanner(strings.NewReader(hosts))
+	for scanner.Scan() {
+		hostMap[scanner.Text()] = struct{}{}
+	}
+	for _, rule := range dns.Spec.Rules {
+		if _, ok := hostMap[rule.Host]; ok {
+			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+				Error: fmt.Sprintf("host %s conflicts with existing host", rule.Host),
+			})
+			return
+		}
+		hosts += rule.Host + "\n"
+	}
+
+	// 检查每个path的service backend是否存在
+	for _, rule := range dns.Spec.Rules {
+		for _, path := range rule.Paths {
+			svcName := path.Backend.Service.Name
+			namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, svcName)
+			uid, err := s.store_cli.Get(namespaceSvcKey)
+			if err != nil || uid == "" {
+				c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+					Error: fmt.Sprintf("service %s/%s not found", namespace, svcName),
+				})
+				return
+			}
+			allSvcKey := fmt.Sprintf("/registry/services/%s", uid)
+			svcJson, err := s.store_cli.Get(allSvcKey)
+			if err != nil || svcJson == "" {
+				c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+					Error: "error in reading service from etcd",
+				})
+				return
+			}
+			var svc v1.Service
+			err = json.Unmarshal([]byte(svcJson), &svc)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+					Error: "error in json unmarshal",
+				})
+				return
+			}
+			isPortMatched := false
+			for _, port := range svc.Spec.Ports {
+				if port.Port == path.Backend.Service.Port {
+					isPortMatched = true
+					break
+				}
+			}
+			if !isPortMatched {
+				c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+					Error: fmt.Sprintf("service %s does not have port %d", svcName, path.Backend.Service.Port),
+				})
+				return
+			}
+		}
+	}
+
+	// now create it!
+	dns.CreationTimestamp = timestamp.NewTimestamp()
+	dns.UID = v1.UID(uuid.NewUUID())
+
+	// 存hosts
+	err = s.store_cli.Set(hostKey, hosts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing hosts to etcd",
+		})
+		return
+	}
+
+	// 存uuid
+	err = s.store_cli.Set(namespaceDNSKey, string(dns.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+
+	// 存dns json
+	allDNSKey := fmt.Sprintf("/registry/dns/%s", dns.UID)
+	dnsJson, err := json.Marshal(dns)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	err = s.store_cli.Set(allDNSKey, string(dnsJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.DNS]{
+		Data: &dns,
+	})
+}
+
+func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
+	namespace := c.Param("namespace")
+	dnsName := c.Param("dnsname")
+	if namespace == "" || dnsName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
+			Error: "namespace and dns name cannot be empty",
+		})
+		return
+	}
+	namespaceDNSKey := fmt.Sprintf("/registry/%s/dns/%s", namespace, dnsName)
+	uid, err := s.store_cli.Get(namespaceDNSKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.DNS]{
+			Error: fmt.Sprintf("dns %s/%s not found", namespace, dnsName),
+		})
+		return
+	}
+
+	allDNSKey := fmt.Sprintf("/registry/dns/%s", uid)
+	dnsJson, err := s.store_cli.Get(allDNSKey)
+	if err != nil || dnsJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in reading dns from etcd",
+		})
+		return
+	}
+
+	var dns v1.DNS
+	err = json.Unmarshal([]byte(dnsJson), &dns)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	// 删除host
+	hostKey := "/registry/hosts"
+	hosts, err := s.store_cli.Get(hostKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in reading hosts from etcd",
+		})
+		return
+	}
+	hostsToDelete := make(map[string]struct{})
+	for _, rule := range dns.Spec.Rules {
+		hostsToDelete[rule.Host] = struct{}{}
+	}
+	scanner := bufio.NewScanner(strings.NewReader(hosts))
+	newHosts := ""
+	for scanner.Scan() {
+		host := scanner.Text()
+		if _, ok := hostsToDelete[host]; !ok {
+			newHosts += host + "\n"
+		}
+	}
+	err = s.store_cli.Set(hostKey, newHosts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in writing hosts to etcd",
+		})
+		return
+	}
+
+	// 删除dns
+	err = s.store_cli.Delete(namespaceDNSKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in deleting dns from etcd",
+		})
+		return
+	}
+	err = s.store_cli.Delete(allDNSKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.DNS]{
+			Error: "error in deleting dns from etcd",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.DNS]{
+		Data: &dns,
+	})
+}
+
+func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
+	address := c.Query("address")
+	if net.ParseIP(address) == nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
+			Error: "invalid ip address",
+		})
+	}
+	bitmapKey := "/registry/NodePool/bitmap"
+	bitmapStr, err := s.store_cli.Get(bitmapKey)
+	bitmap := []byte(bitmapStr)
+	if err != nil || bitmapStr == "" {
+		initialBitmap := make([]byte, utils.NodePoolSize/8)
+		bitmap = initialBitmap
+		err = s.store_cli.Set(bitmapKey, string(initialBitmap))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+				Error: "error in writing bitmap to etcd",
+			})
+			return
+		}
+	}
+	nodeName, err := utils.AllocNode(bitmap)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: err.Error(),
+		})
+		return
+	}
+	err = s.store_cli.Set(bitmapKey, string(bitmap))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Service]{
+			Error: "error in writing bitmap to etcd",
+		})
+		return
+	}
+	node := &v1.Node{
+		TypeMeta: v1.TypeMeta{
+			Kind:       "Node",
+			APIVersion: "v1",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Name:              nodeName,
+			Namespace:         Default_Namespace,
+			UID:               v1.UID(uuid.NewUUID()),
+			CreationTimestamp: timestamp.NewTimestamp(),
+		},
+		Status: v1.NodeStatus{
+			Address: address,
+		},
+	}
+	allNodeKey := fmt.Sprintf("/registry/nodes/%v", node.UID)
+	namespaceNodeKey := fmt.Sprintf("/registry/namespaces/%v/nodes/%v", node.Namespace, node.Name)
+	nodeJson, err := json.Marshal(node)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	err = s.store_cli.Set(allNodeKey, string(nodeJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in writing node to etcd",
+		})
+		return
+	}
+	err = s.store_cli.Set(namespaceNodeKey, string(node.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in writing node to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.Node]{
+		Data: node,
+	})
+}
+
+func (s *kubeApiServer) UnregisterNodeHandler(c *gin.Context) {
+	nodeName := c.Query("nodename")
+	namespace := Default_Namespace
+	if nodeName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
+			Error: "node name or namespace cannot be empty",
+		})
+		return
+	}
+	namespaceNodeKey := fmt.Sprintf("/registry/namespaces/%s/nodes/%s", namespace, nodeName)
+	uid, err := s.store_cli.Get(namespaceNodeKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.Node]{
+			Error: fmt.Sprintf("node %s/%s not found", namespace, nodeName),
+		})
+		return
+	}
+	// 把所有pod变为unscheduled
+	nodePodKey := fmt.Sprintf("/registry/host-nodes/%s/pods", nodeName)
+	err = s.store_cli.DeleteSubKeys(nodePodKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in deleting node-pod mappings from etcd",
+		})
+		return
+	}
+	// 删除pod
+	err = s.store_cli.Delete(namespaceNodeKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in deleting node from etcd",
+		})
+		return
+	}
+	allNodeKey := fmt.Sprintf("/registry/nodes/%s", uid)
+	err = s.store_cli.Delete(allNodeKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in deleting node from etcd",
+		})
+		return
+	}
+	// 释放node
+	bitmapKey := "/registry/NodePool/bitmap"
+	bitmapStr, err := s.store_cli.Get(bitmapKey)
+	if err != nil || bitmapStr == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in reading node pool bitmap from etcd",
+		})
+		return
+	}
+	bitmap := []byte(bitmapStr)
+	err = utils.FreeNode(nodeName, bitmap)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: err.Error(),
+		})
+		return
+	}
+	err = s.store_cli.Set(bitmapKey, string(bitmap))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in writing node pool bitmap to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.Node]{})
+}
+
+func (s *kubeApiServer) GetAllNodesHandler(c *gin.Context) {
+	allNodeKey := "/registry/nodes"
+	res, err := s.store_cli.GetSubKeysValues(allNodeKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	nodes := make([]*v1.Node, 0)
+	for _, v := range res {
+		var node v1.Node
+		err = json.Unmarshal([]byte(v), &node)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.Node]{
+				Error: "error in json unmarshal",
+			})
+			return
+		}
+		nodes = append(nodes, &node)
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Node]{
+		Data: nodes,
+	})
+}
+
+func (s *kubeApiServer) SchedulePodToNodeHandler(c *gin.Context) {
+	podUid := c.Query("podUid")
+	nodeName := c.Query("nodename")
+	if podUid == "" || nodeName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[interface{}]{
+			Error: "pod uid or node name cannot be empty",
+		})
+		return
+	}
+	podKey := fmt.Sprintf("/registry/pods/%s", podUid)
+	podJson, err := s.store_cli.Get(podKey)
+	if err != nil || podJson == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[interface{}]{
+			Error: fmt.Sprintf("pod %s not found", podUid),
+		})
+		return
+	}
+
+	var pod v1.Pod
+	err = json.Unmarshal([]byte(podJson), &pod)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	res, err := s.store_cli.GetSubKeysValues("/registry/host-nodes")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	for k, v := range res {
+		if v == podUid {
+			err = s.store_cli.Delete(k)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
+					Error: "error in deleting old node-pod mapping from etcd",
+				})
+				return
+			}
+		}
+	}
+
+	nodePodKey := fmt.Sprintf("/registry/host-nodes/%s/pods/%s_%s", nodeName, pod.Namespace, pod.Name)
+	err = s.store_cli.Set(nodePodKey, podUid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[interface{}]{
+			Error: "error in writing new node-pod mapping to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[interface{}]{})
+}
+
+func (s *kubeApiServer) GetUnscheduledPodHandler(c *gin.Context) {
+	// 获取所有pod
+	allPodKey := "/registry/pods"
+	res, err := s.store_cli.GetSubKeysValues(allPodKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.Pod]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	// 通过/registry/host-nodes获取所有已被调度的pod uid
+	hostKeyPrefix := "/registry/host-nodes"
+	hostRes, err := s.store_cli.GetSubKeysValues(hostKeyPrefix)
+	scheduledUidSet := make(map[string]struct{})
+	for _, uid := range hostRes {
+		scheduledUidSet[uid] = struct{}{}
+	}
+	var unscheduledPods []*v1.Pod
+	for _, v := range res {
+		var pod v1.Pod
+		err = json.Unmarshal([]byte(v), &pod)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.Pod]{
+				Error: "error in json unmarshal",
+			})
+			return
+		}
+		if _, ok := scheduledUidSet[string(pod.UID)]; !ok {
+			unscheduledPods = append(unscheduledPods, &pod)
+		}
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Pod]{
+		Data: unscheduledPods,
+	})
+}
+
+func (ser *kubeApiServer) GetAllReplicaSetsHandler(con *gin.Context) {
+	log.Println("GetAllReplicaSets")
+	all_replicaset_str := make([]v1.ReplicaSet, 0)
+	prefix := "/registry"
+	all_replicaset_keystr := prefix + "/replicaset"
+
+	res, err := ser.store_cli.GetSubKeysValues(all_replicaset_keystr)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in reading all replicas sets in etcd",
+		})
+		return
+	}
+
+	//namespace_replicaset_keystr := prefix + "/namespace/" + Default_Namespace + "/replicasets/"
+	//
+	//res2, err2 := ser.store_cli.Get(namespace_replicaset_keystr)
+	//if err2 != nil {
+	//	log.Println("replica set name already exists")
+	//	con.JSON(http.StatusConflict, gin.H{
+	//		"error": "replica set name already exists",
+	//	})
+	//	return
+	//}
+	//for k, v := range res2 {
+	//	println("-----------------------------------")
+	//	println(k)
+	//	println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+	//	println(v)
+	//
+	//}
+
+	if len(res) == 0 {
+		con.JSON(http.StatusOK, v1.BaseResponse[[]*v1.ReplicaSet]{Data: nil})
+		return
+	}
+
+	for _, v := range res {
+		var rps v1.ReplicaSet
+		err = json.Unmarshal([]byte(v), &rps)
+		if err != nil {
+			log.Println("error in json unmarshal")
+			con.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error in json unmarshal",
+			})
+			return
+		}
+		println(rps.UID)
+		all_replicaset_str = append(all_replicaset_str, rps)
+	}
+
+	con.JSON(http.StatusOK,
+		gin.H{
+			"data": all_replicaset_str,
+		},
+	)
+}
+
+func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
+	log.Println("Adding a new replica set")
+	var rps v1.ReplicaSet
+	err := con.ShouldBind(&rps)
+	if err != nil {
+		log.Panicln("something is wrong when parsing replica set")
+		return
+	}
+	rps_name := rps.ObjectMeta.Name
+	if rps_name == "" {
+		rps_name = Default_Podname
+	}
+
+	rps_label := rps.Spec.Selector.MatchLabels
+	if rps_label == nil {
+		con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "replica set labels are required",
+		})
+		return
+	}
+
+	//rps_template := rps.Template
+	//if rps_template == empty {
+	//	con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+	//		Error: "replica set template is required",
+	//	})
+	//	return
+	//}
+
+	rps.ObjectMeta.UID = (v1.UID)(uuid.NewUUID())
+	rps.ObjectMeta.CreationTimestamp = timestamp.NewTimestamp()
+	prefix := "/registry"
+
+	all_replicaset_keystr := prefix + "/replicaset/" + string(rps.ObjectMeta.UID)
+	namespace_replicaset_keystr := prefix + "/namespace/" + Default_Namespace + "/replicasets/" + rps_name
+
+	res, err := ser.store_cli.Get(namespace_replicaset_keystr)
+	if res != "" || err != nil {
+		log.Println("replica set name already exists")
+		con.JSON(http.StatusConflict, gin.H{
+			"error": "replica set name already exists",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(namespace_replicaset_keystr, string(rps.ObjectMeta.UID))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
+
+	rps_str, err := json.Marshal(rps)
+
+	if err != nil {
+		log.Println("error in json marshal")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in json marshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(all_replicaset_keystr, string(rps_str))
+	if err != nil {
+		log.Println("error in writing to etcd")
+		con.JSON(http.StatusInternalServerError, gin.H{
+			"error": "error in writing to etcd",
+		})
+		return
+	}
+
+	con.JSON(http.StatusCreated, gin.H{
+		"message": "successfully created replica set",
+		"UUID":    rps.ObjectMeta.UID,
+	})
+
+}
+
+func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
+	namespace := con.Param("namespace")
+	rpsName := con.Param("replicasetname")
+	if namespace == "" || rpsName == "" {
+		con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "namespace and replica set name cannot be empty",
+		})
+		return
+	}
+	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", Default_Namespace, rpsName)
+	uid, err := ser.store_cli.Get(namespaceRpsKey)
+	if err != nil || uid == "" {
+		con.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: fmt.Sprintf("replica set %s/%s not found", namespace, rpsName),
+		})
+		return
+	}
+
+	allRpsKey := fmt.Sprintf("/registry/replicaset/%s", uid)
+	rpsJson, err := ser.store_cli.Get(allRpsKey)
+	if err != nil || rpsJson == "" {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in reading replica set from etcd",
+		})
+		return
+	}
+	var rps v1.ReplicaSet
+	err = json.Unmarshal([]byte(rpsJson), &rps)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Delete(namespaceRpsKey)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in deleting replica set from etcd",
+		})
+		return
+	}
+	err = ser.store_cli.Delete(allRpsKey)
+	if err != nil {
+		con.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in deleting replica set from etcd",
+		})
+		return
+	}
+	con.JSON(http.StatusOK, v1.BaseResponse[*v1.ReplicaSet]{
+		Data: &rps,
 	})
 }
 

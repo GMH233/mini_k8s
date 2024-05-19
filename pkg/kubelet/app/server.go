@@ -8,6 +8,7 @@ import (
 	"minikubernetes/pkg/kubelet"
 	"minikubernetes/pkg/kubelet/client"
 	"minikubernetes/pkg/kubelet/types"
+	"minikubernetes/pkg/kubelet/utils"
 	"os"
 	"os/signal"
 	"sync"
@@ -31,7 +32,16 @@ func NewKubeletServer(apiServerIP string) (*KubeletServer, error) {
 
 func (kls *KubeletServer) Run() {
 	// TODO 获取当前节点的nodeId
-	kls.nodeName = "node-0"
+	// kls.nodeName = "node-0"
+	address, err := utils.GetHostIP()
+	if err != nil {
+		log.Fatalf("Failed to get host ip: %v", err)
+	}
+	node, err := kls.kubeClient.RegisterNode(address)
+	if err != nil {
+		log.Fatalf("Failed to register node: %v", err)
+	}
+	kls.nodeName = node.Name
 
 	// context+wait group实现notify和join
 	ctx, cancel := context.WithCancel(context.Background())

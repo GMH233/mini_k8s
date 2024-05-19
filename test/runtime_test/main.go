@@ -24,6 +24,6 @@ func main() {
 	pod := &v1.Pod{
 		Spec: *podSpec,
 	}
-	rm := rt.NewRuntimeManager()
+	rm := rt.NewRuntimeManager("1.1.1.1")
 	rt.RuntimeManager.AddPod(rm, pod)
 }
