@@ -74,6 +74,11 @@ const (
 	AllReplicaSetsURL       = "/api/v1/replicasets"
 	NamespaceReplicaSetsURL = "/api/v1/namespaces/:namespace/replicasets"
 	SingleReplicaSetURL     = "/api/v1/namespaces/:namespace/replicasets/:replicasetname"
+
+	StatsDataURL         = "/api/v1/stats/data/type/:type"
+	AllScalingURL        = "/api/v1/scaling/type/:type"
+	NamespaceScalingsURL = "/api/v1/scaling/type/:type/namespaces/:namespace"
+	SingleScalingURL     = "/api/v1/scaling/type/:type/namespaces/:namespace/name/:name"
 )
 
 /* NAMESPACE
