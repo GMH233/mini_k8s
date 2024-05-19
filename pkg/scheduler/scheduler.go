@@ -14,13 +14,21 @@ const (
 )
 
 type Scheduler interface {
-}
-
-type Node struct {
+	Run()
 }
 
 type scheduler struct {
-	client kubeclient.Client
+	client          kubeclient.Client
+	roundRobinCount int
+	policy          string
+}
+
+func NewScheduler(apiServerIP string, policy string) Scheduler {
+	manager := &scheduler{}
+	manager.client = kubeclient.NewClient(apiServerIP)
+	manager.roundRobinCount = 0
+	manager.policy = policy
+	return manager
 }
 
 func (sc *scheduler) Run() {
@@ -41,7 +49,7 @@ func (sc *scheduler) syncLoop() error {
 		return err
 	}
 	for _, pod := range pods {
-		policy := "Round_Policy"
+		policy := sc.policy
 
 		nodes, err := sc.informNodes()
 		if err != nil {
@@ -51,23 +59,21 @@ func (sc *scheduler) syncLoop() error {
 		if err != nil {
 			return err
 		}
-		filteredNodes, err := sc.filterNodes(reqs, limit, nodes)
-		if err != nil {
-			return err
-		}
+		//filteredNodes, err := sc.filterNodes(reqs, limit, nodes)
+		//if err != nil {
+		//	return err
+		//}
 		switch policy {
 		case Round_Policy:
-			SelectedNodes, err := sc.nodesInRoundPolicy(reqs, limit, filteredNodes)
-			if err != nil {
-				return err
-			}
+			SelectedNodes, err := sc.nodesInRoundPolicy(reqs, limit, nodes)
+
 			err = sc.addPodToNode(SelectedNodes, pod)
 			if err != nil {
 				return err
 			}
 			break
 		case Random_Policy:
-			SelectedNodes, err := sc.nodesInRandomPolicy(reqs, limit, filteredNodes)
+			SelectedNodes, err := sc.nodesInRandomPolicy(reqs, limit, nodes)
 			if err != nil {
 				return err
 			}
@@ -83,21 +89,26 @@ func (sc *scheduler) syncLoop() error {
 }
 
 func (sc *scheduler) informPods() ([]*v1.Pod, error) {
-	pods, err := sc.client.GetAllPods()
+	pods, err := sc.client.GetAllUnscheduledPods()
 	if err != nil {
 		return nil, err
 	}
-	var res []*v1.Pod
-	for _, pod := range pods {
-		if pod.Status.Phase == v1.PodPending {
-			res = append(res, pod)
-		}
-	}
-	return res, nil
+	//var res []*v1.Pod
+	//for _, pod := range pods {
+	//	if pod.Status.Phase == v1.PodPending {
+	//		res = append(res, pod)
+	//	}
+	//}
+	return pods, nil
 }
 
-func (sc *scheduler) informNodes() ([]*Node, error) {
-	return nil, nil
+func (sc *scheduler) informNodes() ([]*v1.Node, error) {
+
+	nodes, err := sc.client.GetAllNodes()
+	if err != nil {
+		return nil, err
+	}
+	return nodes, nil
 }
 
 func (sc *scheduler) getResources(cts []v1.Container) ([]v1.ResourceList, []v1.ResourceList, error) {
@@ -110,8 +121,8 @@ func (sc *scheduler) getResources(cts []v1.Container) ([]v1.ResourceList, []v1.R
 	return reqs, limit, nil
 }
 
-func (sc *scheduler) filterNodes(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*Node) ([]*Node, error) {
-	var res []*Node
+func (sc *scheduler) filterNodes(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*v1.Node) ([]*v1.Node, error) {
+	var res []*v1.Node
 	for _, node := range nodes {
 		//TODO：进行过滤
 		res = append(res, node)
@@ -119,15 +130,20 @@ func (sc *scheduler) filterNodes(rqs []v1.ResourceList, lim []v1.ResourceList, n
 	return res, nil
 }
 
-func (sc *scheduler) nodesInRoundPolicy(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*Node) (*Node, error) {
+func (sc *scheduler) nodesInRoundPolicy(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*v1.Node) (*v1.Node, error) {
 	if nodes == nil {
 		return nil, nil
 	}
-
-	return nodes[0], nil
+	lens := len(nodes)
+	if lens == 0 {
+		return nil, nil
+	}
+	num := sc.roundRobinCount % lens
+	sc.roundRobinCount++
+	return nodes[num], nil
 }
 
-func (sc *scheduler) nodesInRandomPolicy(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*Node) (*Node, error) {
+func (sc *scheduler) nodesInRandomPolicy(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*v1.Node) (*v1.Node, error) {
 	if nodes == nil {
 		return nil, nil
 	}
@@ -137,7 +153,13 @@ func (sc *scheduler) nodesInRandomPolicy(rqs []v1.ResourceList, lim []v1.Resourc
 	return nodes[num], nil
 }
 
-func (sc *scheduler) addPodToNode(node *Node, pod *v1.Pod) error {
-	//TODO:调用API
+func (sc *scheduler) addPodToNode(node *v1.Node, pod *v1.Pod) error {
+	if node == nil {
+		return nil
+	}
+	err := sc.client.AddPodToNode(*pod, *node)
+	if err != nil {
+		return err
+	}
 	return nil
 }

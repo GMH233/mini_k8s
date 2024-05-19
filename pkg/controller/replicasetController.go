@@ -36,6 +36,7 @@ func (rc *replicaSetController) RunRSC() error {
 func (rc *replicaSetController) addPod(pod *v1.Pod) {
 
 	pod.Name = pod.Name + time.Now().Format(FormatTime)
+	pod.TypeMeta.Kind = "Pod"
 	err := rc.client.AddPod(*pod)
 	if err != nil {
 		return
@@ -44,7 +45,6 @@ func (rc *replicaSetController) addPod(pod *v1.Pod) {
 }
 
 func (rc *replicaSetController) deletePod(name, namespace string) {
-
 	err := rc.client.DeletePod(name, namespace)
 	if err != nil {
 		return

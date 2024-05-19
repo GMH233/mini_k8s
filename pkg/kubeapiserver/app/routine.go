@@ -11,6 +11,7 @@ import (
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 	"net"
+	"sort"
 	"strings"
 
 	"net/http"
@@ -1538,6 +1539,9 @@ func (s *kubeApiServer) GetAllNodesHandler(c *gin.Context) {
 		}
 		nodes = append(nodes, &node)
 	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
 	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.Node]{
 		Data: nodes,
 	})
