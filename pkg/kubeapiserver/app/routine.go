@@ -13,6 +13,7 @@ import (
 	"minikubernetes/tools/uuid"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	"net/http"
@@ -201,6 +202,8 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(AllReplicaSetsURL, ser.GetAllReplicaSetsHandler)
 	ser.router.POST(NamespaceReplicaSetsURL, ser.AddReplicaSetHandler)
+	ser.router.GET(SingleReplicaSetURL, ser.GetReplicaSetHandler)
+	ser.router.PUT(SingleReplicaSetURL, ser.UpdateReplicaSetHandler)
 	ser.router.DELETE(SingleReplicaSetURL, ser.DeleteReplicaSetHandler)
 
 	ser.router.GET(StatsDataURL, ser.GetStatsDataHandler)
@@ -2002,6 +2005,121 @@ func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
 		"UUID":    rps.ObjectMeta.UID,
 	})
 
+}
+
+func (s *kubeApiServer) GetReplicaSetHandler(c *gin.Context) {
+	namespace := c.Param("namespace")
+	rpsName := c.Param("replicasetname")
+	if namespace == "" || rpsName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "namespace and replica set name cannot be empty",
+		})
+		return
+	}
+	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", namespace, rpsName)
+	uid, err := s.store_cli.Get(namespaceRpsKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: fmt.Sprintf("replica set %s/%s not found", namespace, rpsName),
+		})
+		return
+	}
+
+	allRpsKey := fmt.Sprintf("/registry/replicaset/%s", uid)
+	rpsJson, err := s.store_cli.Get(allRpsKey)
+	if err != nil || rpsJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in reading replica set from etcd",
+		})
+		return
+	}
+	var rps v1.ReplicaSet
+	err = json.Unmarshal([]byte(rpsJson), &rps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.ReplicaSet]{
+		Data: &rps,
+	})
+
+}
+
+func (s *kubeApiServer) UpdateReplicaSetHandler(c *gin.Context) {
+	// 目前的更新方式
+	// 1.更新replica set的replicas数量
+
+	// 获取name . namespace 和待更新的数量int
+	namespace := c.Param("namespace")
+	rpsName := c.Param("replicasetname")
+	if namespace == "" || rpsName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "namespace and replica set name cannot be empty",
+		})
+		return
+	}
+	//  PUT方法获取int
+	replicas, err := strconv.Atoi(c.Query("replicas"))
+
+	fmt.Printf("next replicas: %d\n", replicas)
+
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "replicas must be an integer",
+		})
+		return
+	}
+
+	// 从etcd中获取replica set
+	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", namespace, rpsName)
+	uid, err := s.store_cli.Get(namespaceRpsKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: fmt.Sprintf("replica set %s/%s not found", namespace, rpsName),
+		})
+		return
+	}
+
+	allRpsKey := fmt.Sprintf("/registry/replicaset/%s", uid)
+	rpsJson, err := s.store_cli.Get(allRpsKey)
+	if err != nil || rpsJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in reading replica set from etcd",
+		})
+		return
+	}
+	var rps v1.ReplicaSet
+	err = json.Unmarshal([]byte(rpsJson), &rps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	// 更新replicas数量
+	rps.Spec.Replicas = (int32)(replicas)
+
+	rpsRawStr, err := json.Marshal(rps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	// 存回
+	err = s.store_cli.Set(allRpsKey, string(rpsRawStr))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in writing replica set to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.ReplicaSet]{
+		Data: &rps,
+	})
 }
 
 func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
