@@ -8,7 +8,6 @@ import (
 	"minikubernetes/pkg/kubeclient"
 	"minikubernetes/pkg/kubelet/runtime"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +24,8 @@ import (
 // 	mc.Run()
 // }
 
+var mdebug bool = true
+
 type metricsCollector struct {
 	// 从cadvisor中获取容器指标的操作者
 	ip         string
@@ -36,6 +37,7 @@ type metricsCollector struct {
 	// podStat得加锁
 	podStatsLock sync.Mutex
 	podStats     []*runtime.PodStatus
+	conLastTime  map[string]time.Time
 }
 
 type MetricsCollector interface {
@@ -127,6 +129,8 @@ func (mc *metricsCollector) init() {
 	}
 
 	mc.kube_cli = kubeclient.NewClient("192.168.1.10")
+
+	mc.conLastTime = make(map[string]time.Time)
 	mc.podStats = nil
 
 }
@@ -155,11 +159,13 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 		IdType:    Info.TypeName,
 		Count:     interval,
 		Recursive: false,
-		MaxAge:    nil,
+		MaxAge:    new(time.Duration),
 	}
+	*request.MaxAge = time.Duration(0)
 
 	// 保存所有的pod指标
 	var AllPodMetrics []*v1.PodRawMetrics
+
 	mc.podStatsLock.Lock()
 	// 对于每一个Pod:都得获取指标
 	for _, podStat := range mc.podStats {
@@ -187,7 +193,7 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 				fmt.Printf("get container info err: %v", err.Error())
 			}
 			// fmt.Printf("container info: %v\n", sInfo)
-			// sInfo的key是dockerId
+			// Map_PfxId_Stats的key是PrefixDockerId
 			// 这样就可以获得cpu瞬时的占用率了,total_usage以nano core为单位.
 			for _, item := range MapPfxIdStats[PrefixDockerId].Stats {
 				var cMetricItem v1.PodRawMetricsItem
@@ -195,17 +201,24 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 				if item.CpuInst == nil || item.Memory == nil {
 					continue
 				}
+				//如果比上次时间戳还小，就不用上传
+				if lastTime, ok := mc.conLastTime[dockerId]; ok {
+					if !item.Timestamp.After(lastTime) {
+						fmt.Printf("时间戳不早于上次，不用上传\n")
+						continue
+					}
+				}
+				// 更新时间戳
+				fmt.Printf("更新时间戳\n")
+				mc.conLastTime[dockerId] = item.Timestamp
+
 				cMetricItem.TimeStamp = item.Timestamp
 
 				{
 					total_usage := item.CpuInst.Usage.Total
-					// vcpu个数
-					total_cpus, err := strconv.Atoi(container.Resources.CPULimit)
-					if err != nil {
-						fmt.Printf("get vcpu num err: %v", err.Error())
-					}
-					// 需要转化成利用率，因为vcpu个数是controller不可见的
-					cpu_usage := (float64(total_usage) / NANOCORES) / (float64(total_cpus))
+
+					// 需要转化成利用率，有点反直觉，但是不用除以物理核心数
+					cpu_usage := (float64(total_usage) / NANOCORES)
 					cMetricItem.CPUUsage = cpu_usage
 					// fmt.Printf("container stats:%v\n", cpu_usage)
 

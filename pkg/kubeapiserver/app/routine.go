@@ -214,7 +214,7 @@ func (ser *kubeApiServer) binder() {
 func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
 	// 通过结构体来获取查询请求
 	var query v1.MetricsQuery
-	err := c.ShouldBind(&query)
+	err := c.ShouldBindQuery(&query)
 	if err != nil {
 		c.JSON(http.StatusBadRequest,
 			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: "error in parsing query"},
@@ -222,10 +222,12 @@ func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
 		return
 	}
 	// 通过query来获取数据
+	fmt.Printf("get query: %v\n", query)
+	fmt.Printf("get query uid: %v\n", query.UID)
 	data, err := s.metrics_cli.GetPodMetrics(query.UID, query.TimeStamp, query.Window)
 
 	if err != nil {
-		log.Printf("error in getting metrics: %v", err)
+		fmt.Printf("error in getting metrics: %v\n", err)
 		c.JSON(http.StatusInternalServerError,
 			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: fmt.Sprintf("error in getting metrics: %v", err)},
 		)
@@ -238,9 +240,14 @@ func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
 }
 func (s *kubeApiServer) AddStatsDataHandler(c *gin.Context) {
 	// 获取需要保存的metrics
+	// contentStr, _ := c.GetRawData()
+	// fmt.Printf("get content str: %v\n", string(contentStr))
+
 	var metrics []*v1.PodRawMetrics
 	err := c.ShouldBind(&metrics)
+	fmt.Printf("get metrics str: %v\n", metrics)
 	if err != nil {
+		log.Printf("error in parsing metrics: %v", err)
 		c.JSON(http.StatusBadRequest,
 			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: "error in parsing metrics"},
 		)

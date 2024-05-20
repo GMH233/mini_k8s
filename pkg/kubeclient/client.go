@@ -230,6 +230,7 @@ func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

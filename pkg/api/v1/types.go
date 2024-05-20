@@ -151,14 +151,12 @@ type PodStatus struct {
 }
 
 type MetricsQuery struct {
-	// 查询的资源种类
-	TypeMeta `json:",inline"`
 	// 查询的资源
-	UID UID `json:"uid,omitempty"`
+	UID UID `form:"uid" json:"uid,omitempty"`
 	// 当前的时间戳
-	TimeStamp time.Time `json:"timestamp,omitempty"`
+	TimeStamp time.Time `form:"timestamp" json:"timestamp,omitempty"`
 	// 查询的时间窗口 (秒)
-	Window int `json:"window,omitempty"`
+	Window int `form:"window" json:"window,omitempty"`
 }
 
 // PodRawMetrics 用于标记Pod的资源使用情况, 作为stat接口的传输结构
@@ -173,9 +171,9 @@ type PodRawMetricsItem struct {
 	// 保证切片单元的时间戳是对齐的
 	TimeStamp time.Time `json:"timestamp,omitempty"`
 	// 单个容器的CPU使用率，以百分比计算
-	CPUUsage float64 `json:"cpuUsage,omitempty"`
+	CPUUsage float64 `json:"cpuUsage"`
 	// 单个容器内存使用量,以MB计算
-	MemoryUsage float64 `json:"memoryUsage,omitempty"`
+	MemoryUsage float64 `json:"memoryUsage"`
 }
 
 type ScalerType string

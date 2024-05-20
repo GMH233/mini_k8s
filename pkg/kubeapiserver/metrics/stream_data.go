@@ -31,7 +31,7 @@ type metricsDb struct {
 
 func NewMetricsDb() (*metricsDb, error) {
 	return (&metricsDb{
-		metrics: make(map[v1.UID]v1.PodRawMetrics, 0),
+		metrics: make(map[v1.UID]v1.PodRawMetrics),
 	}), nil
 }
 
@@ -50,7 +50,10 @@ func (db *metricsDb) SavePodMetrics(podMetrics []*v1.PodRawMetrics) error {
 	for _, podItem := range podMetrics {
 		// 如果podId不存在，则直接插入
 		if _, ok := db.metrics[podItem.UID]; !ok {
+			fmt.Printf("podId %v not found, insert directly\n", podItem.UID)
+			fmt.Printf("podItem: %v\n", podItem)
 			db.metrics[podItem.UID] = *podItem
+			fmt.Printf("len of metrics: %v\n", len(db.metrics))
 		} else {
 			// 如果podId存在，则对ContainerInfo进行处理
 			for cName, cInfo := range podItem.ContainerInfo {
@@ -64,6 +67,7 @@ func (db *metricsDb) SavePodMetrics(podMetrics []*v1.PodRawMetrics) error {
 			curLen := len(db.metrics[podItem.UID].ContainerInfo[cName])
 
 			if curLen > DefaultWindowSize {
+				fmt.Printf("podId %v container %v has too many records, delete the earliest\n", podItem.UID, cName)
 				db.metrics[podItem.UID].ContainerInfo[cName] = db.metrics[podItem.UID].ContainerInfo[cName][curLen-DefaultWindowSize:]
 			}
 		}
@@ -78,7 +82,14 @@ func (db *metricsDb) GetPodMetrics(podId v1.UID, timeStamp time.Time, n int) ([]
 	db.rwLock.RLock()
 	defer db.rwLock.RUnlock()
 
+	fmt.Printf("len of metrics: %v\n", len(db.metrics))
+	for k, v := range db.metrics {
+		fmt.Printf("key: %v, value: %v\n", k, v)
+	}
+	fmt.Printf("podId: %v\n", podId)
+
 	if podMetrics, ok := db.metrics[podId]; ok {
+
 		// 由时间戳来判断是否在n秒内 metrics是按照时间戳递增的
 		if len(podMetrics.ContainerInfo) == 0 {
 			return nil, fmt.Errorf("containerInfo is empty")
