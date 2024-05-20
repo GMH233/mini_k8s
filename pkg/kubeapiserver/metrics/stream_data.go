@@ -94,15 +94,19 @@ func (db *metricsDb) GetPodMetrics(podId v1.UID, timeStamp time.Time, n int) ([]
 		if len(podMetrics.ContainerInfo) == 0 {
 			return nil, fmt.Errorf("containerInfo is empty")
 		}
+		fmt.Printf("参数获取到的时间戳:%v\n", timeStamp)
 		earliestValidTS := timeStamp.Add(-time.Duration(n) * time.Second)
-
+		fmt.Printf("需要查询到的最早的时间戳:%v\n", earliestValidTS)
 		for cName, containerInfo := range podMetrics.ContainerInfo {
 			// 找到比earliestValidTS大的最小的index
 			l := sort.Search(len(containerInfo), func(i int) bool {
 				return containerInfo[i].TimeStamp.After(earliestValidTS)
 			})
+			r := sort.Search(len(containerInfo), func(i int) bool {
+				return containerInfo[i].TimeStamp.After(timeStamp)
+			})
 
-			podMetrics.ContainerInfo[cName] = containerInfo[l:]
+			podMetrics.ContainerInfo[cName] = containerInfo[l:r]
 		}
 
 		return []*v1.PodRawMetrics{&podMetrics}, nil
