@@ -171,9 +171,9 @@ type PodRawMetricsItem struct {
 	// 保证切片单元的时间戳是对齐的
 	TimeStamp time.Time `json:"timestamp,omitempty"`
 	// 单个容器的CPU使用率，以百分比计算
-	CPUUsage float64 `json:"cpuUsage"`
+	CPUUsage float32 `json:"cpuUsage"`
 	// 单个容器内存使用量,以MB计算
-	MemoryUsage float64 `json:"memoryUsage"`
+	MemoryUsage float32 `json:"memoryUsage"`
 }
 
 type ScalerType string

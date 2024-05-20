@@ -21,7 +21,10 @@ func GetPodMetrics() {
 
 }
 
-// 从apiServer中获取HorizontalPodAutoscaler的信息
+// 从apiServer中获取所有HorizontalPodAutoscaler的信息
 func GetAutoscalers() {
+
+}
+func GetRelatedRepSets() {
 
 }

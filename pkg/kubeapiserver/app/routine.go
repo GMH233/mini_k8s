@@ -77,8 +77,8 @@ const (
 
 	StatsDataURL         = "/api/v1/stats/data"
 	AllScalingURL        = "/api/v1/scaling/"
-	NamespaceScalingsURL = "/api/v1/scaling/type/:type/namespaces/:namespace"
-	SingleScalingURL     = "/api/v1/scaling/type/:type/namespaces/:namespace/name/:name"
+	NamespaceScalingsURL = "/api/v1/namespaces/:namespace/scaling"
+	SingleScalingURL     = "/api/v1/namespaces/:namespace/scaling/scalingname/:name"
 )
 
 /* NAMESPACE
@@ -268,30 +268,20 @@ func (s *kubeApiServer) AddStatsDataHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetAllScalingHandler(c *gin.Context) {
-	typename := c.Params.ByName("type")
-	if typename == string(v1.ScalerTypeHPA) {
 
-		allSca, err := s.getAllScalingsFromEtcd()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
-				Error: fmt.Sprintf("error in getting all scalings: %v", err),
-			})
-			return
-		}
-		c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{Data: allSca})
-
-	} else {
-		// 不支持
-		c.JSON(http.StatusNotFound, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
-			Error: "not supported type",
+	allSca, err := s.getAllScalingsFromEtcd()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
+			Error: fmt.Sprintf("error in getting all scalings: %v", err),
 		})
-
+		return
 	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{Data: allSca})
 
 }
 func (s *kubeApiServer) getAllScalingsFromEtcd() ([]*v1.HorizontalPodAutoscaler, error) {
-	allScaKey := "/registry/scaling/hpa"
-	res, err := s.store_cli.GetSubKeysValues(allScaKey)
+	allScaKeyPrefix := "/registry/scaling"
+	res, err := s.store_cli.GetSubKeysValues(allScaKeyPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -308,54 +298,122 @@ func (s *kubeApiServer) getAllScalingsFromEtcd() ([]*v1.HorizontalPodAutoscaler,
 }
 
 func (ser *kubeApiServer) AddScalingHandler(c *gin.Context) {
-	// typename := c.Params.ByName("type")
-	// if typename == string(v1.ScalerTypeHPA) {
-	// 	var hpa v1.HorizontalPodAutoscaler
-	// 	err := c.ShouldBind(&hpa)
-	// 	if err != nil {
-	// 		c.JSON(http.StatusBadRequest, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
-	// 			Error: "error in parsing hpa",
-	// 		})
-	// 		return
-	// 	}
-	// 	if hpa.Name == "" {
-	// 		c.JSON(http.StatusBadRequest, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
-	// 			Error: "hpa name is required",
-	// 		})
-	// 		return
-	// 	}
-	// 	if hpa.Namespace == "" {
-	// 		hpa.Namespace = Default_Namespace
-	// 	}
-	// 	hpa.CreationTimestamp = timestamp.NewTimestamp()
-	// 	hpa.UID = (v1.UID)(uuid.NewUUID())
-	// 	if hpa.Spec.MinReplicas == 0 {
-	// 		hpa.Spec.MinReplicas = 1
-	// 	}
+	var hpa v1.HorizontalPodAutoscaler
+	err := c.ShouldBind(&hpa)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in parsing hpa",
+		})
+		return
+	}
+	if hpa.Kind != string(v1.ScalerTypeHPA) {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "scaling type not supported",
+		})
+		return
+	}
+	if hpa.Name == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "hpa name is required",
+		})
+		return
+	}
+	if hpa.Namespace == "" {
+		hpa.Namespace = Default_Namespace
+	}
+	hpa.CreationTimestamp = timestamp.NewTimestamp()
+	hpa.UID = (v1.UID)(uuid.NewUUID())
+	if hpa.Spec.MinReplicas == 0 {
+		hpa.Spec.MinReplicas = 1
+	}
 
-	// 	hpaKey := fmt.Sprintf("/registry/scaling/hpa/%s/%s", hpa.Namespace, hpa.Name)
-	// 	hpaStr, err := json.Marshal(hpa)
-	// 	if err != nil {
-	// 		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
-	// 			Error: "error in json marshal",
-	// 		})
-	// 		return
-	// 	}
+	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", hpa.Namespace, hpa.Name)
+	allhpaKey := fmt.Sprintf("/registry/scaling/%s", hpa.UID)
 
-	// 	err = ser.store_cli.Set(hpaKey, hpaStr)
+	hpaStr, err := json.Marshal(hpa)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	err = ser.store_cli.Set(hpaKey, string(hpa.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in writing scaling uid to etcd",
+		})
+		return
+	}
 
-	// } else {
-	// 	// 不支持
-	// }
+	err = ser.store_cli.Set(allhpaKey, string(hpaStr))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in writing scaling to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{Data: &hpa})
+
 }
 
 func (ser *kubeApiServer) DeleteScalingHandler(c *gin.Context) {
-	typename := c.Params.ByName("type")
-	if typename == string(v1.ScalerTypeHPA) {
-
-	} else {
-		// 不支持
+	namespace := c.Params.ByName("namespace")
+	name := c.Params.ByName("name")
+	if namespace == "" || name == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "namespace and name are required",
+		})
+		return
 	}
+	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", namespace, name)
+	hpaUid, err := ser.store_cli.Get(hpaKey)
+
+	if hpaUid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "scaling not found",
+		})
+		return
+
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in getting scaling uid from etcd",
+		})
+		return
+	}
+	err = ser.store_cli.Delete(hpaKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in deleting scaling from etcd",
+		})
+	}
+	allhpaKey := fmt.Sprintf("/registry/scaling/%s", hpaUid)
+
+	var hpa v1.HorizontalPodAutoscaler
+	hpaStr, err := ser.store_cli.Get(allhpaKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in getting scaling from etcd",
+		})
+		return
+	}
+	err = json.Unmarshal([]byte(hpaStr), &hpa)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Delete(allhpaKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in deleting scaling from etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{Data: &hpa})
 
 }
 

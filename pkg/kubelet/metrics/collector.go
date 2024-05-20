@@ -151,8 +151,8 @@ func (mc *metricsCollector) SetPodInfo(podStats []*runtime.PodStatus) {
 func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 	// 指定字段从cadvisor中获取容器指标
 	// Count是获取的
-	const NANOCORES float64 = 1e9
-	const MEGABYTE float64 = 1024 * 1024
+	const NANOCORES float32 = 1e9
+	const MEGABYTE float32 = 1024 * 1024
 	var interval int = 10 + 1 // 第一个必然是nil
 
 	request := Info.RequestOptions{
@@ -218,7 +218,7 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 					total_usage := item.CpuInst.Usage.Total
 
 					// 需要转化成利用率，有点反直觉，但是不用除以物理核心数
-					cpu_usage := (float64(total_usage) / NANOCORES)
+					cpu_usage := (float32(total_usage) / NANOCORES)
 					cMetricItem.CPUUsage = cpu_usage
 					// fmt.Printf("container stats:%v\n", cpu_usage)
 
@@ -227,7 +227,7 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 				{
 					memory_usage := item.Memory.Usage
 					// 以mb计量
-					mb_usage := float64(memory_usage) / MEGABYTE
+					mb_usage := float32(memory_usage) / MEGABYTE
 					cMetricItem.MemoryUsage = mb_usage
 					// fmt.Printf("container memory stats:%v\n", mb_usage)
 				}
