@@ -70,7 +70,7 @@ func (mc *metricsCollector) tryStartCAdvisor() {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		fmt.Printf("start cadvisor err: %v, stderr: %v", err.Error(), stderr.String())
+		log.Printf("start cadvisor err: %v, stderr: %v", err.Error(), stderr.String())
 	}
 }
 
@@ -84,13 +84,14 @@ func (mc *metricsCollector) Run() {
 	go func() {
 		syncTicker := time.NewTicker(time.Duration(interval) * time.Second)
 		defer syncTicker.Stop()
+		defer log.Printf("stop metrics collector")
 		for {
 			select {
 			case <-syncTicker.C:
 				err := mc.CheckAlive()
 				if err != nil {
 					// 尝试启动cadvisor
-					fmt.Printf(err.Error())
+					log.Printf(err.Error())
 					mc.tryStartCAdvisor()
 				} else {
 					if mc.podStats != nil {
@@ -98,13 +99,13 @@ func (mc *metricsCollector) Run() {
 						// 获取容器指标
 						curMetrics, err := mc.getMetrics()
 						if err != nil {
-							fmt.Printf("get metrics err: %v", err.Error())
+							log.Printf("get metrics err: %v", err.Error())
 						}
 						log.Printf("metrics to be uploaded: %v", curMetrics)
 						// 上传指标
 						err = mc.uploadMetrics(curMetrics)
 						if err != nil {
-							fmt.Printf("upload metrics err: %v", err.Error())
+							log.Printf("upload metrics err: %v", err.Error())
 						}
 					}
 				}
@@ -115,6 +116,7 @@ func (mc *metricsCollector) Run() {
 }
 
 func (mc *metricsCollector) init() {
+	log.Printf("init metrics collector")
 	err := mc.CheckAlive()
 	if err != nil {
 		// 尝试启动cadvisor
@@ -125,7 +127,7 @@ func (mc *metricsCollector) init() {
 	client, err := CAdvClient.NewClient(URLStr)
 	mc.cad_client = client
 	if err != nil {
-		fmt.Printf("init cadvisor client err: %v", err.Error())
+		log.Printf("init cadvisor client err: %v", err.Error())
 	}
 
 	mc.kube_cli = kubeclient.NewClient("192.168.1.10")
@@ -190,7 +192,7 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 			MapPfxIdStats, err := mc.cad_client.Stats(PrefixDockerId, &request)
 
 			if err != nil {
-				fmt.Printf("get container info err: %v", err.Error())
+				log.Printf("get container info err: %v", err.Error())
 			}
 			// fmt.Printf("container info: %v\n", sInfo)
 			// Map_PfxId_Stats的key是PrefixDockerId
@@ -204,12 +206,12 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 				//如果比上次时间戳还小，就不用上传
 				if lastTime, ok := mc.conLastTime[dockerId]; ok {
 					if !item.Timestamp.After(lastTime) {
-						fmt.Printf("时间戳不早于上次，不用上传\n")
+						fmt.Printf("Timestamp is not later than last time, no update\n")
 						continue
 					}
 				}
 				// 更新时间戳
-				fmt.Printf("更新时间戳\n")
+				fmt.Printf("update Timestamp\n")
 				mc.conLastTime[dockerId] = item.Timestamp
 
 				cMetricItem.TimeStamp = item.Timestamp

@@ -77,7 +77,7 @@ const (
 	SingleReplicaSetURL     = "/api/v1/namespaces/:namespace/replicasets/:replicasetname"
 
 	StatsDataURL         = "/api/v1/stats/data"
-	AllScalingURL        = "/api/v1/scaling/"
+	AllScalingURL        = "/api/v1/scaling"
 	NamespaceScalingsURL = "/api/v1/namespaces/:namespace/scaling"
 	SingleScalingURL     = "/api/v1/namespaces/:namespace/scaling/scalingname/:name"
 )
