@@ -233,7 +233,7 @@ type MetricTarget struct {
 
 	// averageValue is the target value of the average of the
 	// metric across all relevant pods (as a quantity)
-	// 和具体的指标单位有关，例如CPU是vcores，内存是MB
+	// 和具体的指标单位有关，内存是MB
 	AverageValue float32 `json:"averageValue,omitempty"`
 
 	// averageUtilization is the target value of the average of the
@@ -291,10 +291,10 @@ const (
 	// PodsScalingPolicy is a policy used to specify a change in absolute number of pods.
 	PodsScalingPolicy HPAScalingPolicyType = "Pods"
 
-	// // PercentScalingPolicy is a policy used to specify a relative amount of change with respect to
-	// // the current number of pods.
-	// // TODO: 增加百分比的支持
-	// PercentScalingPolicy HPAScalingPolicyType = "Percent"
+	// PercentScalingPolicy is a policy used to specify a relative amount of change with respect to
+	// the current number of pods.
+	// 百分比的支持
+	PercentScalingPolicy HPAScalingPolicyType = "Percent"
 )
 
 // HPAScalingPolicy is a single policy which must hold true for a specified past interval.

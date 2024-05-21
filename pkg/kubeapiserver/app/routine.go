@@ -333,6 +333,17 @@ func (ser *kubeApiServer) AddScalingHandler(c *gin.Context) {
 	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", hpa.Namespace, hpa.Name)
 	allhpaKey := fmt.Sprintf("/registry/scaling/%s", hpa.UID)
 
+	// 检查是否有重复的
+	hpaUid, err := ser.store_cli.Get(hpaKey)
+	if hpaUid != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "scaling already exists",
+		})
+		return
+	}
+
+	// 没有重复，可以添加
+
 	hpaStr, err := json.Marshal(hpa)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
