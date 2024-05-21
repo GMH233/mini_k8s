@@ -2,13 +2,7 @@ package init
 
 import (
 	"github.com/coreos/go-iptables/iptables"
-)
-
-const (
-	InboundPort  = "15006"
-	OutboundPort = "15001"
-	UID          = "1337"
-	GID          = "1337"
+	"minikubernetes/pkg/microservice/envoy"
 )
 
 type EnvoyInit struct {
@@ -33,7 +27,7 @@ func (e *EnvoyInit) Init() error {
 		return err
 	}
 	// 在MISTIO_REDIRECT链中追加一条REDIRECT规则，重定向到Envoy的Outbound端口
-	err = e.ipt.Append("nat", "MISTIO_REDIRECT", "-p", "tcp", "-j", "REDIRECT", "--to-port", OutboundPort)
+	err = e.ipt.Append("nat", "MISTIO_REDIRECT", "-p", "tcp", "-j", "REDIRECT", "--to-port", envoy.OutboundPort)
 	if err != nil {
 		return err
 	}
@@ -43,7 +37,7 @@ func (e *EnvoyInit) Init() error {
 		return err
 	}
 	// 在MISTIO_IN_REDIRECT链中追加一条REDIRECT规则，重定向到Envoy的Inbound端口
-	err = e.ipt.Append("nat", "MISTIO_IN_REDIRECT", "-p", "tcp", "-j", "REDIRECT", "--to-port", InboundPort)
+	err = e.ipt.Append("nat", "MISTIO_IN_REDIRECT", "-p", "tcp", "-j", "REDIRECT", "--to-port", envoy.InboundPort)
 	if err != nil {
 		return err
 	}
@@ -81,7 +75,7 @@ func (e *EnvoyInit) Init() error {
 	err = e.ipt.Append("nat", "MISTIO_OUTPUT",
 		"-o", "lo",
 		"!", "-d", "127.0.0.1/32",
-		"-m", "owner", "--uid-owner", UID,
+		"-m", "owner", "--uid-owner", envoy.UID,
 		"-j", "MISTIO_IN_REDIRECT")
 	if err != nil {
 		return err
@@ -90,15 +84,15 @@ func (e *EnvoyInit) Init() error {
 	// e.g. appN => appN by lo
 	err = e.ipt.Append("nat", "MISTIO_OUTPUT",
 		"-o", "lo",
-		"-m", "owner", "!", "--uid-owner", UID,
+		"-m", "owner", "!", "--uid-owner", envoy.UID,
 		"-j", "RETURN")
 	if err != nil {
 		return err
 	}
 	// Avoid infinite loops. Don't redirect Envoy traffic directly back to
-	// EnvoyInit for non-loopback traffic.
+	// Envoy for non-loopback traffic.
 	err = e.ipt.Append("nat", "MISTIO_OUTPUT",
-		"-m", "owner", "--uid-owner", UID,
+		"-m", "owner", "--uid-owner", envoy.UID,
 		"-j", "RETURN")
 	if err != nil {
 		return err
@@ -108,20 +102,20 @@ func (e *EnvoyInit) Init() error {
 	err = e.ipt.Append("nat", "MISTIO_OUTPUT",
 		"-o", "lo",
 		"!", "-d", "127.0.0.1/32",
-		"-m", "owner", "--gid-owner", GID,
+		"-m", "owner", "--gid-owner", envoy.GID,
 		"-j", "MISTIO_IN_REDIRECT")
 	if err != nil {
 		return err
 	}
 	err = e.ipt.Append("nat", "MISTIO_OUTPUT",
 		"-o", "lo",
-		"-m", "owner", "!", "--gid-owner", GID,
+		"-m", "owner", "!", "--gid-owner", envoy.GID,
 		"-j", "RETURN")
 	if err != nil {
 		return err
 	}
 	err = e.ipt.Append("nat", "MISTIO_OUTPUT",
-		"-m", "owner", "--gid-owner", GID,
+		"-m", "owner", "--gid-owner", envoy.GID,
 		"-j", "RETURN")
 	if err != nil {
 		return err
