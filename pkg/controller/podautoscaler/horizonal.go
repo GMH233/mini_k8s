@@ -29,14 +29,14 @@ func (hc *horizonalController) Run() {
 	var interval int = 1
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt)
-	log.Printf("Start HPA Controller")
+	log.Printf("Start HPA Controller\n")
 	// 现在只处理一个scaler的情况
 	// 如果之后有多个scaler，分别起协程定时处理
 	// 这样还得有一个类似pleg的东西，定时检查是否有新的scaler
 	go func() {
 		syncTicker := time.NewTicker(time.Duration(interval) * time.Second)
 		defer syncTicker.Stop()
-		defer log.Printf("Stop HPA Controller")
+		defer log.Printf("Stop HPA Controller\n")
 		for {
 			select {
 			case <-syncTicker.C:
@@ -64,13 +64,13 @@ func (hc *horizonalController) Run() {
 					log.Printf("[HPA] Conducting HPA: %v\n", hpa)
 					reps, err := hc.kube_cli.GetAllReplicaSets()
 					if err != nil {
-						log.Printf("Get all ReplicaSets failed, error: %v", err)
+						log.Printf("Get all ReplicaSets failed, error: %v\n", err)
 						// return err
 					}
 					// 根据hpa中spec的scaleTargetRef找到对应的ReplicaSet(目前只能有一个)
 					rep, err := oneMatchRps(hpa, reps)
 					if err != nil {
-						log.Printf("Get all ReplicaSets failed, error: %v", err)
+						log.Printf("Get all ReplicaSets failed, error: %v\n", err)
 						// return err
 					}
 					log.Printf("[HPA] ReplicaSet Matched:   %v\n", rep)
@@ -79,17 +79,36 @@ func (hc *horizonalController) Run() {
 
 					log.Printf("[HPA] Pods Matched: %v\n", podsMatch)
 
-					// 根据pod的Id获取所有的Metrics
-					// for _, pod := range podsMatch {
-					// 	//需要取得hpa中相关的策略字段，以获取相关的统计窗口大小
-					// 	upBehavior := hpa.Spec.Behavior.ScaleUp
-					// 	downBehavior := hpa.Spec.Behavior.ScaleDown
-					// 	// 这里假设apiserver在创建的时候就处理了默认策略
+					//需要取得hpa中相关的策略字段，以获取相关的统计窗口大小
+					upBehavior := hpa.Spec.Behavior.ScaleUp
+					downBehavior := hpa.Spec.Behavior.ScaleDown
+					// 这里假设apiserver在创建的时候就处理了默认策略
 
-					// }
+					upPeriod := upBehavior.PeriodSeconds
+					downPeriod := downBehavior.PeriodSeconds
+
+					log.Printf("[HPA] UpPeriod: %v, DownPeriod: %v\n", upPeriod, downPeriod)
+					// 当前时间戳
+					now := time.Now()
+
+					// 根据pod的Id获取所有的Metrics
+					for _, pod := range podsMatch {
+						oneQuery := v1.MetricsQuery{
+							UID:       pod.UID,
+							TimeStamp: now,
+							Window:    upPeriod,
+						}
+
+						oneMetrics, err := hc.kube_cli.GetPodMetrics(oneQuery)
+						if err != nil {
+							log.Printf("Get Pod Metrics failed, error: %v\n", err)
+							// return err
+						}
+						log.Printf("[HPA] Pod Metrics: %v\n", oneMetrics)
+
+					}
 				}
 
-				// 4. 根据ReplicaSet的labels筛选所有的Pod
 				// 5. 获取所有的Metrics
 				// 6. 根据HorizontalPodAutoscaler的策略进行扩缩容
 				// 7. 向apiserver发送请求改变ReplicaSet的副本数
@@ -99,7 +118,7 @@ func (hc *horizonalController) Run() {
 	}()
 	// 获取到ctrl+c信号
 	<-signalCh
-	log.Printf("HPA Controller exit")
+	log.Printf("HPA Controller exit\n")
 	// log.Printf("HPA Controller exit abnormaly")
 }
 
@@ -111,16 +130,6 @@ func (hc *horizonalController) Strategy() {
 // 向apiserver发送请求改变ReplicaSet的副本数
 func (hc *horizonalController) changeRpsPodNum(name string, namespace string, repNum int) error {
 	return nil
-}
-
-// 从apiServer中获取统计的信息
-func GetPodMetrics() {
-
-}
-
-// 从apiServer中获取所有HorizontalPodAutoscaler的信息
-func GetAutoscalers() {
-
 }
 
 // 从apiServer里面获取相关的ReplicaSet

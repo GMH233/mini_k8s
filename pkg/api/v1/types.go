@@ -156,7 +156,7 @@ type MetricsQuery struct {
 	// 当前的时间戳
 	TimeStamp time.Time `form:"timestamp" json:"timestamp,omitempty"`
 	// 查询的时间窗口 (秒)
-	Window int `form:"window" json:"window,omitempty"`
+	Window int32 `form:"window" json:"window,omitempty"`
 }
 
 // PodRawMetrics 用于标记Pod的资源使用情况, 作为stat接口的传输结构
