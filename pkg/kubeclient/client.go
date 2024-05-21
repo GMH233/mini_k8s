@@ -22,7 +22,7 @@ type Client interface {
 	AddPodToNode(pod v1.Pod, node v1.Node) error
 
 	// GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error)
-	UpdateReplicaSet(name, namespace string, repNum int) error
+	UpdateReplicaSet(name, namespace string, repNum int32) error
 	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
 	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
 	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
@@ -246,11 +246,15 @@ func (c *client) AddPodToNode(pod v1.Pod, node v1.Node) error {
 // 	return &baseResponse.Data, nil
 // }
 
-func (c *client) UpdateReplicaSet(name, namespace string, repNum int) error {
+func (c *client) UpdateReplicaSet(name, namespace string, repNum int32) error {
 	req, err := http.NewRequest("PUT", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name), nil)
 	if err != nil {
 		return err
 	}
+
+	query := req.URL.Query()
+	query.Add("replicas", fmt.Sprint(repNum))
+	req.URL.RawQuery = query.Encode()
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

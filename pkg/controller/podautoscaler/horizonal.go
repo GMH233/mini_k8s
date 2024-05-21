@@ -85,6 +85,14 @@ func (hc *horizonalController) Run() {
 					log.Printf("[HPA] ReplicaSet Matched:   %v\n", rep)
 					// 根据ReplicaSet的labels筛选所有的Pod
 					podsMatch, err := oneMatchRpsLabels(rep, allPods)
+					if err != nil {
+						log.Printf("Get all Pods failed, error: %v\n", err)
+						// return err
+					}
+					if len(podsMatch) == 0 {
+						log.Printf("No matched pods!\n")
+						continue
+					}
 
 					log.Printf("[HPA] Pods Matched: %v\n", podsMatch)
 
@@ -100,15 +108,17 @@ func (hc *horizonalController) Run() {
 					// 当前时间戳
 					now := time.Now()
 
+					allPodCpuAvg := float32(0)
 					// 根据pod的Id获取所有的Metrics
 					for _, pod := range podsMatch {
-						// A. 处理扩容的请求
+						// 1. 处理扩容的请求
 						oneQuery := v1.MetricsQuery{
 							UID:       pod.UID,
 							TimeStamp: now,
 							Window:    upPeriod,
 						}
 
+						// 一个pod的统计参数
 						oneMetrics, err := hc.kube_cli.GetPodMetrics(oneQuery)
 						if err != nil {
 							log.Printf("Get Pod Metrics failed, error: %v\n", err)
@@ -123,21 +133,75 @@ func (hc *horizonalController) Run() {
 						// log.Printf("[HPA] Pod Metrics: %v\n", oneMetrics)
 						// 根据HorizontalPodAutoscaler的策略进行扩缩容
 
+						// A. 统计CPU
+						var podCpuSum float32 = 0
+						// 单个container的cpu使用率
 						var sum, avg float32
+
+						// 对于每个container 统计其cpu使用率
+						// 目前是计算时间窗口内的平均使用率
 						for _, oneCtnr := range oneMetrics.ContainerInfo {
+							sum = 0
 							for _, i := range oneCtnr {
 								sum += i.CPUUsage
 							}
 							if len(oneCtnr) != 0 {
 								avg = sum / float32(len(oneCtnr))
+								log.Printf("[HPA] Pod Metrics avg cpu / one container: %v\n", avg)
+							}
+							podCpuSum += avg
+						}
+						podCpuAvg := podCpuSum / float32(len(oneMetrics.ContainerInfo))
+
+						// 计算Pod的平均cpu使用率
+						// 默认是所有container的平均值
+						log.Printf("[HPA] Pod Metrics avg cpu / all containers in one pod: %v\n", podCpuAvg)
+						allPodCpuAvg += podCpuAvg
+					}
+
+					// 计算所有Pod的平均cpu使用率
+					allPodCpuAvg = allPodCpuAvg / float32(len(podsMatch))
+					log.Printf("[HPA] All Pods Metrics avg cpu / all pods: %v\n", allPodCpuAvg)
+
+					// 准备根据CPU扩容
+					// 其实应该先找metrics,看看有没有cpu这一项
+					// 在metrics里面找到cpu这一项
+					// 目前仅允许有一项
+
+					for _, metricsTplt := range hpa.Spec.Metrics {
+
+						if metricsTplt.Name == v1.ResourceCPU {
+							if metricsTplt.Target.Type == v1.UtilizationMetricType {
+								if allPodCpuAvg > float32(metricsTplt.Target.UpperThreshold/100) {
+									// 可以扩容
+									log.Printf("[HPA] UpScale: %v\n", hpa)
+									newRepNum := rep.Spec.Replicas + 1
+									if newRepNum > hpa.Spec.MaxReplicas {
+										newRepNum = hpa.Spec.MaxReplicas
+									}
+									// 向apiserver发送请求改变ReplicaSet的副本数
+									err := hc.changeRpsPodNum(rep.Name, rep.Namespace, newRepNum)
+									if err != nil {
+									}
+								} else if allPodCpuAvg < float32(metricsTplt.Target.LowerThreshold/100) {
+									// 可以缩容
+									log.Printf("[HPA] DownScale: %v\n", hpa)
+									newRepNum := rep.Spec.Replicas - 1
+									if newRepNum < hpa.Spec.MinReplicas {
+										newRepNum = hpa.Spec.MinReplicas
+									}
+									// 向apiserver发送请求改变ReplicaSet的副本数
+									err := hc.changeRpsPodNum(rep.Name, rep.Namespace, newRepNum)
+									if err != nil {
+									}
+
+								}
 							}
 						}
-						// avg = sum / float32(len(oneMetrics.ContainerInfo))
-						log.Printf("[HPA] Pod Metrics avg cpu / all containers: %v\n", avg)
 					}
-				}
 
-				// 6. 根据HorizontalPodAutoscaler的策略进行扩缩容
+					// TODO B. 统计Memory
+				}
 				// 7. 向apiserver发送请求改变ReplicaSet的副本数
 			}
 		}
@@ -155,7 +219,13 @@ func (hc *horizonalController) Strategy() {
 }
 
 // 向apiserver发送请求改变ReplicaSet的副本数
-func (hc *horizonalController) changeRpsPodNum(name string, namespace string, repNum int) error {
+func (hc *horizonalController) changeRpsPodNum(name string, namespace string, repNum int32) error {
+	fmt.Printf("changeRpsPodNum: %v, %v, %v\n", name, namespace, repNum)
+	err := hc.kube_cli.UpdateReplicaSet(name, namespace, repNum)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
