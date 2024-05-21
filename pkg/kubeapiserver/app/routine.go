@@ -220,7 +220,7 @@ func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
 	err := c.ShouldBindQuery(&query)
 	if err != nil {
 		c.JSON(http.StatusBadRequest,
-			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: "error in parsing query"},
+			v1.BaseResponse[*v1.PodRawMetrics]{Error: "error in parsing query"},
 		)
 		return
 	}
@@ -232,12 +232,12 @@ func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
 	if err != nil {
 		fmt.Printf("error in getting metrics: %v\n", err)
 		c.JSON(http.StatusInternalServerError,
-			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: fmt.Sprintf("error in getting metrics: %v", err)},
+			v1.BaseResponse[*v1.PodRawMetrics]{Error: fmt.Sprintf("error in getting metrics: %v", err)},
 		)
 		return
 	}
 	c.JSON(http.StatusOK,
-		v1.BaseResponse[[]*v1.PodRawMetrics]{Data: data},
+		v1.BaseResponse[*v1.PodRawMetrics]{Data: data},
 	)
 
 }

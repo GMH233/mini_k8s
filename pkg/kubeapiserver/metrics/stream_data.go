@@ -13,7 +13,7 @@ type MetricsDatabase interface {
 	// 保存metrics
 	SavePodMetrics(podMetrics []*v1.PodRawMetrics) error
 	// 获取某个Pod在metrics的timeStamp前n秒内的记录
-	GetPodMetrics(podId v1.UID, timeStamp time.Time, n int32) ([]*v1.PodRawMetrics, error)
+	GetPodMetrics(podId v1.UID, timeStamp time.Time, n int32) (*v1.PodRawMetrics, error)
 
 	// 锁的实现应该隐藏在内部
 }
@@ -77,7 +77,7 @@ func (db *metricsDb) SavePodMetrics(podMetrics []*v1.PodRawMetrics) error {
 	return nil
 }
 
-func (db *metricsDb) GetPodMetrics(podId v1.UID, timeStamp time.Time, n int32) ([]*v1.PodRawMetrics, error) {
+func (db *metricsDb) GetPodMetrics(podId v1.UID, timeStamp time.Time, n int32) (*v1.PodRawMetrics, error) {
 	// 上读锁
 	db.rwLock.RLock()
 	defer db.rwLock.RUnlock()
@@ -109,7 +109,7 @@ func (db *metricsDb) GetPodMetrics(podId v1.UID, timeStamp time.Time, n int32) (
 			podMetrics.ContainerInfo[cName] = containerInfo[l:r]
 		}
 
-		return []*v1.PodRawMetrics{&podMetrics}, nil
+		return &podMetrics, nil
 
 	} else {
 		return nil, fmt.Errorf("podId not found")

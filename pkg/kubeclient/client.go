@@ -25,7 +25,7 @@ type Client interface {
 	UpdateReplicaSet(name, namespace string, repNum int) error
 	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
 	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
-	GetPodMetrics(v1.MetricsQuery) ([]*v1.PodRawMetrics, error)
+	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
 }
 
 type client struct {
@@ -309,7 +309,7 @@ func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
 	return nil
 }
 
-func (c *client) GetPodMetrics(metricsQry v1.MetricsQuery) ([]*v1.PodRawMetrics, error) {
+func (c *client) GetPodMetrics(metricsQry v1.MetricsQuery) (*v1.PodRawMetrics, error) {
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s:8001/api/v1/stats/data", c.apiServerIP), nil)
 	if err != nil {
 		return nil, err
@@ -327,7 +327,7 @@ func (c *client) GetPodMetrics(metricsQry v1.MetricsQuery) ([]*v1.PodRawMetrics,
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var baseResponse v1.BaseResponse[[]*v1.PodRawMetrics]
+	var baseResponse v1.BaseResponse[*v1.PodRawMetrics]
 	err = json.Unmarshal(body, &baseResponse)
 	if err != nil {
 		return nil, err

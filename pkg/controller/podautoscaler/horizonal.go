@@ -26,7 +26,7 @@ func NewHorizonalController(apiServerIP string) HorizonalController {
 }
 func (hc *horizonalController) Run() {
 
-	var interval int = 1
+	var interval int = 5
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt)
 	log.Printf("Start HPA Controller\n")
@@ -52,6 +52,11 @@ func (hc *horizonalController) Run() {
 					log.Printf("Get all HorizontalPodAutoscaler failed, error: %v", err)
 					// return err
 				}
+				if len(allHPAScalers) == 0 {
+					log.Printf("No HorizontalPodAutoscaler found\n")
+					continue
+				}
+
 				// 2. 获取所有的Pod
 				allPods, err := hc.kube_cli.GetAllPods()
 				log.Printf("[Pod] Get all Pods: %v", allPods)
@@ -73,6 +78,10 @@ func (hc *horizonalController) Run() {
 						log.Printf("Get all ReplicaSets failed, error: %v\n", err)
 						// return err
 					}
+					if rep == nil {
+						log.Printf("ReplicaSet not found\n")
+						continue
+					}
 					log.Printf("[HPA] ReplicaSet Matched:   %v\n", rep)
 					// 根据ReplicaSet的labels筛选所有的Pod
 					podsMatch, err := oneMatchRpsLabels(rep, allPods)
@@ -93,7 +102,7 @@ func (hc *horizonalController) Run() {
 
 					// 根据pod的Id获取所有的Metrics
 					for _, pod := range podsMatch {
-						// 处理扩容的请求
+						// A. 处理扩容的请求
 						oneQuery := v1.MetricsQuery{
 							UID:       pod.UID,
 							TimeStamp: now,
@@ -105,10 +114,26 @@ func (hc *horizonalController) Run() {
 							log.Printf("Get Pod Metrics failed, error: %v\n", err)
 							// return err
 						}
-						log.Printf("[HPA] Pod Metrics: %v\n", oneMetrics)
 
+						if oneMetrics == nil {
+							log.Printf("Pod Metrics not found\n")
+							continue
+						}
+
+						// log.Printf("[HPA] Pod Metrics: %v\n", oneMetrics)
 						// 根据HorizontalPodAutoscaler的策略进行扩缩容
 
+						var sum, avg float32
+						for _, oneCtnr := range oneMetrics.ContainerInfo {
+							for _, i := range oneCtnr {
+								sum += i.CPUUsage
+							}
+							if len(oneCtnr) != 0 {
+								avg = sum / float32(len(oneCtnr))
+							}
+						}
+						// avg = sum / float32(len(oneMetrics.ContainerInfo))
+						log.Printf("[HPA] Pod Metrics avg cpu / all containers: %v\n", avg)
 					}
 				}
 
