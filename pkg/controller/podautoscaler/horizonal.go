@@ -93,6 +93,7 @@ func (hc *horizonalController) Run() {
 
 					// 根据pod的Id获取所有的Metrics
 					for _, pod := range podsMatch {
+						// 处理扩容的请求
 						oneQuery := v1.MetricsQuery{
 							UID:       pod.UID,
 							TimeStamp: now,
@@ -106,10 +107,11 @@ func (hc *horizonalController) Run() {
 						}
 						log.Printf("[HPA] Pod Metrics: %v\n", oneMetrics)
 
+						// 根据HorizontalPodAutoscaler的策略进行扩缩容
+
 					}
 				}
 
-				// 5. 获取所有的Metrics
 				// 6. 根据HorizontalPodAutoscaler的策略进行扩缩容
 				// 7. 向apiserver发送请求改变ReplicaSet的副本数
 			}

@@ -317,7 +317,7 @@ func (c *client) GetPodMetrics(metricsQry v1.MetricsQuery) ([]*v1.PodRawMetrics,
 	query := req.URL.Query()
 
 	query.Add("uid", fmt.Sprint(metricsQry.UID))
-	query.Add("timestamp", fmt.Sprint(metricsQry.TimeStamp))
+	query.Add("timestamp", metricsQry.TimeStamp.UTC().Format("2006-01-02T15:04:05.99999999Z"))
 	query.Add("window", fmt.Sprint(metricsQry.Window))
 	req.URL.RawQuery = query.Encode()
 
