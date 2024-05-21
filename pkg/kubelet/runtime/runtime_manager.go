@@ -3,13 +3,14 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"github.com/docker/docker/api/types/mount"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/docker/docker/api/types/mount"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -378,6 +379,9 @@ func (rm *runtimeManager) checkImages(repotag string) (bool, error) {
 	for _, image := range images {
 		//fmt.Printf("ID: %s\n", image.ID)
 		//fmt.Printf("RepoTags: %v\n", image.RepoTags)
+		if len(image.RepoTags) == 0 {
+			continue
+		}
 		if image.RepoTags[0] == repotag {
 			return true, nil
 		}
