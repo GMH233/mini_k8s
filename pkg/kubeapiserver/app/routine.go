@@ -7,11 +7,13 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeapiserver/etcd"
+	"minikubernetes/pkg/kubeapiserver/metrics"
 	"minikubernetes/pkg/kubeapiserver/utils"
 	"minikubernetes/tools/timestamp"
 	"minikubernetes/tools/uuid"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	"net/http"
@@ -73,6 +75,11 @@ const (
 	AllReplicaSetsURL       = "/api/v1/replicasets"
 	NamespaceReplicaSetsURL = "/api/v1/namespaces/:namespace/replicasets"
 	SingleReplicaSetURL     = "/api/v1/namespaces/:namespace/replicasets/:replicasetname"
+
+	StatsDataURL         = "/api/v1/stats/data"
+	AllScalingURL        = "/api/v1/scaling"
+	NamespaceScalingsURL = "/api/v1/namespaces/:namespace/scaling"
+	SingleScalingURL     = "/api/v1/namespaces/:namespace/scaling/scalingname/:name"
 )
 
 /* NAMESPACE
@@ -85,18 +92,16 @@ const (
 )
 
 type kubeApiServer struct {
-	router    *gin.Engine
-	listen_ip string
-	port      int
-	store_cli etcd.Store
+	router      *gin.Engine
+	listen_ip   string
+	port        int
+	store_cli   etcd.Store
+	metrics_cli metrics.MetricsDatabase
 }
 
 type KubeApiServer interface {
 	Run()
 }
-
-/* Simulate etcd.
- */
 
 func (ser *kubeApiServer) init() {
 	var err error
@@ -106,6 +111,15 @@ func (ser *kubeApiServer) init() {
 		return
 	}
 	ser.store_cli = newStore
+
+	metricsDb, err := metrics.NewMetricsDb()
+	if err != nil {
+		log.Panicln("metrics db init failed")
+		return
+	}
+
+	ser.metrics_cli = metricsDb
+
 	// assume that node-0 already registered
 
 	// TODO:(unnecessary) 检查etcdcli是否有效
@@ -188,7 +202,233 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(AllReplicaSetsURL, ser.GetAllReplicaSetsHandler)
 	ser.router.POST(NamespaceReplicaSetsURL, ser.AddReplicaSetHandler)
+	ser.router.GET(SingleReplicaSetURL, ser.GetReplicaSetHandler)
+	ser.router.PUT(SingleReplicaSetURL, ser.UpdateReplicaSetHandler)
 	ser.router.DELETE(SingleReplicaSetURL, ser.DeleteReplicaSetHandler)
+
+	ser.router.GET(StatsDataURL, ser.GetStatsDataHandler)
+	ser.router.POST(StatsDataURL, ser.AddStatsDataHandler)
+
+	ser.router.GET(AllScalingURL, ser.GetAllScalingHandler)
+	ser.router.POST(NamespaceScalingsURL, ser.AddScalingHandler)
+	ser.router.DELETE(SingleScalingURL, ser.DeleteScalingHandler)
+}
+
+func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
+	// 通过结构体来获取查询请求
+	var query v1.MetricsQuery
+	err := c.ShouldBindQuery(&query)
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			v1.BaseResponse[*v1.PodRawMetrics]{Error: "error in parsing query"},
+		)
+		return
+	}
+	// 通过query来获取数据
+	fmt.Printf("get query: %v\n", query)
+	fmt.Printf("get query uid: %v\n", query.UID)
+	data, err := s.metrics_cli.GetPodMetrics(query.UID, query.TimeStamp, query.Window)
+
+	if err != nil {
+		fmt.Printf("error in getting metrics: %v\n", err)
+		c.JSON(http.StatusInternalServerError,
+			v1.BaseResponse[*v1.PodRawMetrics]{Error: fmt.Sprintf("error in getting metrics: %v", err)},
+		)
+		return
+	}
+	c.JSON(http.StatusOK,
+		v1.BaseResponse[*v1.PodRawMetrics]{Data: data},
+	)
+
+}
+func (s *kubeApiServer) AddStatsDataHandler(c *gin.Context) {
+	// 获取需要保存的metrics
+	// contentStr, _ := c.GetRawData()
+	// fmt.Printf("get content str: %v\n", string(contentStr))
+
+	var metrics []*v1.PodRawMetrics
+	err := c.ShouldBind(&metrics)
+	fmt.Printf("get metrics str: %v\n", metrics)
+	if err != nil {
+		log.Printf("error in parsing metrics: %v", err)
+		c.JSON(http.StatusBadRequest,
+			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: "error in parsing metrics"},
+		)
+		return
+	}
+	// 保存metrics
+	err = s.metrics_cli.SavePodMetrics(metrics)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError,
+			v1.BaseResponse[[]*v1.PodRawMetrics]{Error: fmt.Sprintf("error in saving metrics: %v", err)},
+		)
+		return
+	}
+	c.JSON(http.StatusOK,
+		v1.BaseResponse[[]*v1.PodRawMetrics]{Data: metrics},
+	)
+}
+
+func (s *kubeApiServer) GetAllScalingHandler(c *gin.Context) {
+
+	allSca, err := s.getAllScalingsFromEtcd()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
+			Error: fmt.Sprintf("error in getting all scalings: %v", err),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{Data: allSca})
+
+}
+func (s *kubeApiServer) getAllScalingsFromEtcd() ([]*v1.HorizontalPodAutoscaler, error) {
+	allScaKeyPrefix := "/registry/scaling"
+	res, err := s.store_cli.GetSubKeysValues(allScaKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+	allSca := make([]*v1.HorizontalPodAutoscaler, 0)
+	for _, v := range res {
+		var sca v1.HorizontalPodAutoscaler
+		err = json.Unmarshal([]byte(v), &sca)
+		if err != nil {
+			return nil, err
+		}
+		allSca = append(allSca, &sca)
+	}
+	return allSca, nil
+}
+
+func (ser *kubeApiServer) AddScalingHandler(c *gin.Context) {
+	var hpa v1.HorizontalPodAutoscaler
+	err := c.ShouldBind(&hpa)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in parsing hpa",
+		})
+		return
+	}
+	if hpa.Kind != string(v1.ScalerTypeHPA) {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "scaling type not supported",
+		})
+		return
+	}
+	if hpa.Name == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "hpa name is required",
+		})
+		return
+	}
+	if hpa.Namespace == "" {
+		hpa.Namespace = Default_Namespace
+	}
+	hpa.CreationTimestamp = timestamp.NewTimestamp()
+	hpa.UID = (v1.UID)(uuid.NewUUID())
+	if hpa.Spec.MinReplicas == 0 {
+		hpa.Spec.MinReplicas = 1
+	}
+
+	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", hpa.Namespace, hpa.Name)
+	allhpaKey := fmt.Sprintf("/registry/scaling/%s", hpa.UID)
+
+	// 检查是否有重复的
+	hpaUid, err := ser.store_cli.Get(hpaKey)
+	if hpaUid != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "scaling already exists",
+		})
+		return
+	}
+
+	// 没有重复，可以添加
+
+	hpaStr, err := json.Marshal(hpa)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	err = ser.store_cli.Set(hpaKey, string(hpa.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in writing scaling uid to etcd",
+		})
+		return
+	}
+
+	err = ser.store_cli.Set(allhpaKey, string(hpaStr))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in writing scaling to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{Data: &hpa})
+
+}
+
+func (ser *kubeApiServer) DeleteScalingHandler(c *gin.Context) {
+	namespace := c.Params.ByName("namespace")
+	name := c.Params.ByName("name")
+	if namespace == "" || name == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "namespace and name are required",
+		})
+		return
+	}
+	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", namespace, name)
+	hpaUid, err := ser.store_cli.Get(hpaKey)
+
+	if hpaUid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "scaling not found",
+		})
+		return
+
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in getting scaling uid from etcd",
+		})
+		return
+	}
+	err = ser.store_cli.Delete(hpaKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in deleting scaling from etcd",
+		})
+	}
+	allhpaKey := fmt.Sprintf("/registry/scaling/%s", hpaUid)
+
+	var hpa v1.HorizontalPodAutoscaler
+	hpaStr, err := ser.store_cli.Get(allhpaKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in getting scaling from etcd",
+		})
+		return
+	}
+	err = json.Unmarshal([]byte(hpaStr), &hpa)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	err = ser.store_cli.Delete(allhpaKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{
+			Error: "error in deleting scaling from etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.HorizontalPodAutoscaler]{Data: &hpa})
+
 }
 
 // handlers (trivial)
@@ -1778,6 +2018,121 @@ func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
 
 }
 
+func (s *kubeApiServer) GetReplicaSetHandler(c *gin.Context) {
+	namespace := c.Param("namespace")
+	rpsName := c.Param("replicasetname")
+	if namespace == "" || rpsName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "namespace and replica set name cannot be empty",
+		})
+		return
+	}
+	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", namespace, rpsName)
+	uid, err := s.store_cli.Get(namespaceRpsKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: fmt.Sprintf("replica set %s/%s not found", namespace, rpsName),
+		})
+		return
+	}
+
+	allRpsKey := fmt.Sprintf("/registry/replicaset/%s", uid)
+	rpsJson, err := s.store_cli.Get(allRpsKey)
+	if err != nil || rpsJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in reading replica set from etcd",
+		})
+		return
+	}
+	var rps v1.ReplicaSet
+	err = json.Unmarshal([]byte(rpsJson), &rps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.ReplicaSet]{
+		Data: &rps,
+	})
+
+}
+
+func (s *kubeApiServer) UpdateReplicaSetHandler(c *gin.Context) {
+	// 目前的更新方式
+	// 1.更新replica set的replicas数量
+
+	// 获取name . namespace 和待更新的数量int
+	namespace := c.Param("namespace")
+	rpsName := c.Param("replicasetname")
+	if namespace == "" || rpsName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "namespace and replica set name cannot be empty",
+		})
+		return
+	}
+	//  PUT方法获取int
+	replicas, err := strconv.Atoi(c.Query("replicas"))
+
+	fmt.Printf("next replicas: %d\n", replicas)
+
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "replicas must be an integer",
+		})
+		return
+	}
+
+	// 从etcd中获取replica set
+	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", namespace, rpsName)
+	uid, err := s.store_cli.Get(namespaceRpsKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: fmt.Sprintf("replica set %s/%s not found", namespace, rpsName),
+		})
+		return
+	}
+
+	allRpsKey := fmt.Sprintf("/registry/replicaset/%s", uid)
+	rpsJson, err := s.store_cli.Get(allRpsKey)
+	if err != nil || rpsJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in reading replica set from etcd",
+		})
+		return
+	}
+	var rps v1.ReplicaSet
+	err = json.Unmarshal([]byte(rpsJson), &rps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+
+	// 更新replicas数量
+	rps.Spec.Replicas = (int32)(replicas)
+
+	rpsRawStr, err := json.Marshal(rps)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in json marshal",
+		})
+		return
+	}
+	// 存回
+	err = s.store_cli.Set(allRpsKey, string(rpsRawStr))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.ReplicaSet]{
+			Error: "error in writing replica set to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.ReplicaSet]{
+		Data: &rps,
+	})
+}
+
 func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
 	namespace := con.Param("namespace")
 	rpsName := con.Param("replicasetname")
@@ -1831,3 +2186,8 @@ func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
 		Data: &rps,
 	})
 }
+
+// // 持久化scaled Podname && PodUID
+// func (s *kubeApiServer) storeScaledPod(namespace, deploymentName, podName, podUID string) error {
+
+// }

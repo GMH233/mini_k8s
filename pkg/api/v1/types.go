@@ -1,6 +1,8 @@
 package v1
 
-import "time"
+import (
+	"time"
+)
 
 type UID string
 
@@ -146,6 +148,167 @@ type PodSpec struct {
 type PodStatus struct {
 	Phase PodPhase `json:"phase,omitempty"`
 	PodIP string   `json:"podIP,omitempty"`
+}
+
+type MetricsQuery struct {
+	// 查询的资源
+	UID UID `form:"uid" json:"uid,omitempty"`
+	// 当前的时间戳
+	TimeStamp time.Time `form:"timestamp" json:"timestamp,omitempty"`
+	// 查询的时间窗口 (秒)
+	Window int32 `form:"window" json:"window,omitempty"`
+}
+
+// PodRawMetrics 用于标记Pod的资源使用情况, 作为stat接口的传输结构
+type PodRawMetrics struct {
+	UID UID `json:"uid,omitempty"`
+	// 各个容器的资源使用情况
+	ContainerInfo map[string][]PodRawMetricsItem `json:"containers,omitempty"`
+}
+
+// 会再增加统计的条目的
+type PodRawMetricsItem struct {
+	// 保证切片单元的时间戳是对齐的
+	TimeStamp time.Time `json:"timestamp,omitempty"`
+	// 单个容器的CPU使用率，以百分比计算
+	CPUUsage float32 `json:"cpuUsage"`
+	// 单个容器内存使用量,以MB计算
+	MemoryUsage float32 `json:"memoryUsage"`
+}
+
+type ScalerType string
+
+const (
+	// // ReplicaSet
+	// ScalerTypeReplicaSet ScalerType = "ReplicaSet"
+	// // Deployment
+	// ScalerTypeDeployment ScalerType = "Deployment"
+	// HorizontalPodAutoscaler
+	ScalerTypeHPA ScalerType = "HorizontalPodAutoscaler"
+)
+
+type CrossVersionObjectReference struct {
+	// 例如ReplicaSet，Deployment等
+	Kind string `json:"kind"`
+	// 对象名称
+	Name string `json:"name"`
+	// 默认v1
+	APIVersion string `json:"apiVersion,omitempty"`
+}
+
+type HorizontalPodAutoscaler struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+
+	Spec HorizontalPodAutoscalerSpec `json:"spec,omitempty"`
+}
+
+type HorizontalPodAutoscalerSpec struct {
+	ScaleTargetRef CrossVersionObjectReference `json:"scaleTargetRef"`
+
+	// 期望的最小副本数
+	MinReplicas int32 `json:"minReplicas,omitempty"`
+	// 期望的最大副本数
+	MaxReplicas int32 `json:"maxReplicas"`
+
+	// 监控的资源指标
+	// Metrics []MetricSpec `json:"metrics,omitempty"`
+	Metrics []ResourceMetricSource `json:"metrics,omitempty"`
+	// 行为
+	Behavior HorizontalPodAutoscalerBehavior `json:"behavior,omitempty"`
+}
+
+type ResourceMetricSource struct {
+	// name is the name of the resource in question.
+	Name ResourceName `json:"name"`
+
+	// target specifies the target value for the given metric
+	Target MetricTarget `json:"target"`
+}
+
+// MetricTarget defines the target value, average value, or average utilization of a specific metric
+type MetricTarget struct {
+	// type represents whether the metric type is Utilization, AverageValue
+	Type MetricTargetType `json:"type"`
+
+	// averageValue is the target value of the average of the
+	// metric across all relevant pods (as a quantity)
+	// 和具体的指标单位有关，内存是MB
+	AverageValue float32 `json:"averageValue,omitempty"`
+
+	// averageUtilization is the target value of the average of the
+	// resource metric across all relevant pods, represented as a percentage of
+	// the requested value of the resource for the pods.
+	// Currently only valid for Resource metric source type
+	// 0 ~ 100 (百分比)
+	AverageUtilization float32 `json:"averageUtilization,omitempty"`
+
+	// 触发扩缩容的阈值（百分比，可能大于100）
+	// 上限，默认是min(0.5*（100+目标使用率）, 1.5*目标使用率)
+	UpperThreshold float32 `json:"upperThreshold,omitempty"`
+	// 下限，默认是0.5*目标使用率
+	LowerThreshold float32 `json:"lowerThreshold,omitempty"`
+}
+
+// MetricTargetType specifies the type of metric being targeted, and should be either
+// "AverageValue", or "Utilization"
+// AverageValue指的是使用量的真值，Utilization指的是使用率
+// 完全匹配的value现在不支持
+// 也许之后会通过维持偏差范围来扩缩容 不保真
+type MetricTargetType string
+
+const (
+	// UtilizationMetricType declares a MetricTarget is an AverageUtilization value
+	UtilizationMetricType MetricTargetType = "Utilization"
+	// AverageValueMetricType declares a MetricTarget is an
+	AverageValueMetricType MetricTargetType = "AverageValue"
+)
+
+// HorizontalPodAutoscalerBehavior configures the scaling behavior of the target
+// in both Up and Down directions (scaleUp and scaleDown fields respectively).
+type HorizontalPodAutoscalerBehavior struct {
+	// scaleUp is scaling policy for scaling Up.
+	// If not set, the default value is the higher of:
+	//   * increase no more than 4 pods per 60 seconds
+	//   * double the number of pods per 60 seconds
+	// No stabilization is used.
+	// +optional
+	// 现在扩缩容都只各支持一种策略，默认策略是
+	ScaleUp *HPAScalingPolicy `json:"scaleUp,omitempty"`
+
+	// scaleDown is scaling policy for scaling Down.
+	// If not set, the default value is to allow to scale down to minReplicas pods, with a
+	// 300 second stabilization window (i.e., the highest recommendation for
+	// the last 300sec is used).
+	// +optional
+	ScaleDown *HPAScalingPolicy `json:"scaleDown,omitempty"`
+}
+
+// HPAScalingPolicyType is the type of the policy which could be used while making scaling decisions.
+type HPAScalingPolicyType string
+
+const (
+	// PodsScalingPolicy is a policy used to specify a change in absolute number of pods.
+	PodsScalingPolicy HPAScalingPolicyType = "Pods"
+
+	// PercentScalingPolicy is a policy used to specify a relative amount of change with respect to
+	// the current number of pods.
+	// 百分比的支持
+	PercentScalingPolicy HPAScalingPolicyType = "Percent"
+)
+
+// HPAScalingPolicy is a single policy which must hold true for a specified past interval.
+type HPAScalingPolicy struct {
+	// type is used to specify the scaling policy.
+	Type HPAScalingPolicyType `json:"type"`
+
+	// value contains the amount of change which is permitted by the policy.
+	// It must be greater than zero
+	Value int32 `json:"value"`
+
+	// periodSeconds specifies the window of time for which the policy should hold true.
+	// PeriodSeconds must be greater than zero and less than or equal to 1800 (30 min).
+	PeriodSeconds int32 `json:"periodSeconds"`
 }
 
 type Service struct {

@@ -5,23 +5,29 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubelet/client"
+	kubemetrics "minikubernetes/pkg/kubelet/metrics"
 	"minikubernetes/pkg/kubelet/pleg"
 	kubepod "minikubernetes/pkg/kubelet/pod"
 	"minikubernetes/pkg/kubelet/runtime"
 	"minikubernetes/pkg/kubelet/types"
 	"minikubernetes/pkg/kubelet/utils"
 	"sync"
+	"time"
 )
 
 type Kubelet struct {
-	nodeName       string
-	podManger      kubepod.Manager
-	podWorkers     PodWorkers
+	nodeName   string
+	podManger  kubepod.Manager
+	podWorkers PodWorkers
+	// collector
 	pleg           pleg.PodLifecycleEventGenerator
 	kubeClient     client.KubeletClient
 	runtimeManager runtime.RuntimeManager
 	cache          runtime.Cache
 	nameserverIP   string
+
+	// metrics collector
+	metricsCollector kubemetrics.MetricsCollector
 }
 
 func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet, error) {
@@ -41,6 +47,8 @@ func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet,
 	kl.pleg = pleg.NewPLEG(kl.runtimeManager, kl.cache)
 	kl.podWorkers = NewPodWorkers(kl, kl.cache)
 
+	kl.metricsCollector = kubemetrics.NewMetricsCollector()
+	kl.metricsCollector.Run()
 	log.Println("Kubelet initialized.")
 	return kl, nil
 }
@@ -57,9 +65,11 @@ func (kl *Kubelet) Run(ctx context.Context, wg *sync.WaitGroup, updates <-chan t
 func (kl *Kubelet) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-chan types.PodUpdate) {
 	defer wg.Done()
 	log.Println("Sync loop started.")
+	syncTicker := time.NewTicker(time.Second)
+	defer syncTicker.Stop()
 	plegCh := kl.pleg.Watch()
 	for {
-		if !kl.syncLoopIteration(ctx, updates, plegCh) {
+		if !kl.syncLoopIteration(ctx, updates, syncTicker.C, plegCh) {
 			break
 		}
 	}
@@ -67,7 +77,7 @@ func (kl *Kubelet) syncLoop(ctx context.Context, wg *sync.WaitGroup, updates <-c
 	kl.DoCleanUp()
 }
 
-func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.PodUpdate, plegCh <-chan *pleg.PodLifecycleEvent) bool {
+func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.PodUpdate, syncCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent) bool {
 	// TODO 加入plegCh，syncCh等
 	select {
 	case update, ok := <-configCh:
@@ -92,6 +102,29 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan types.
 			return true
 		}
 		kl.HandlePodLifecycleEvent(pod, e)
+	case <-syncCh:
+		// TODO 定时同步Pod信息到metrics collector
+		allPods, err := kl.runtimeManager.GetAllPods()
+		log.Printf("allPods: %v\n", allPods)
+		if err != nil {
+			log.Printf("Failed to get all pods: %v\n", err)
+			return true
+		}
+		// 由allPods取到所有的status
+		var podStatusList []*runtime.PodStatus
+		for _, pod := range allPods {
+			log.Printf("pod: %v\n", pod)
+			podStatus, err := kl.runtimeManager.GetPodStatus(pod.ID, pod.Name, pod.Namespace)
+			if err != nil {
+				log.Printf("Failed to get pod %v status: %v\n", pod.Name, err)
+				continue
+			}
+			podStatusList = append(podStatusList, podStatus)
+		}
+
+		// 调用metrics collector的接口
+		kl.metricsCollector.SetPodInfo(podStatusList)
+
 	case <-ctx.Done():
 		// 人为停止
 		return false

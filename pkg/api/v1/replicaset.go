@@ -8,9 +8,6 @@ type ReplicaSet struct {
 
 	// ReplicaSet内规格
 	Spec ReplicaSetSpec `json:"spec,omitempty" protobuf:"bytes,2,opt,name=spec"`
-
-	// ReplicaSet内创建pod的模板
-	Template PodTemplateSpec `json:"template,omitempty" yaml:"template" protobuf:"bytes,3,opt,name=template"`
 }
 
 // ReplicaSetSpec : ReplicaSet内规格类

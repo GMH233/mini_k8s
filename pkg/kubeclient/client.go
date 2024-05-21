@@ -20,6 +20,12 @@ type Client interface {
 	GetAllUnscheduledPods() ([]*v1.Pod, error)
 	GetAllNodes() ([]*v1.Node, error)
 	AddPodToNode(pod v1.Pod, node v1.Node) error
+
+	// GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error)
+	UpdateReplicaSet(name, namespace string, repNum int32) error
+	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
+	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
+	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
 }
 
 type client struct {
@@ -215,4 +221,123 @@ func (c *client) AddPodToNode(pod v1.Pod, node v1.Node) error {
 		return fmt.Errorf("add pod to node error: %v", resp.Status)
 	}
 	return nil
+}
+
+// 可能没用到
+// func (c *client) GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error) {
+// 	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name))
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer resp.Body.Close()
+// 	body, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	var baseResponse v1.BaseResponse[v1.ReplicaSet]
+// 	err = json.Unmarshal(body, &baseResponse)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if resp.StatusCode != http.StatusOK {
+// 		return nil, fmt.Errorf("get replica set error: %v", baseResponse.Error)
+// 	}
+// 	return &baseResponse.Data, nil
+// }
+
+func (c *client) UpdateReplicaSet(name, namespace string, repNum int32) error {
+	req, err := http.NewRequest("PUT", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+
+	query := req.URL.Query()
+	query.Add("replicas", fmt.Sprint(repNum))
+	req.URL.RawQuery = query.Encode()
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update replica set error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/scaling", c.apiServerIP))
+
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get hpa scalers failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
+	url := fmt.Sprintf("http://%s:8001/api/v1/stats/data", c.apiServerIP)
+
+	metricsStr, _ := json.Marshal(metrics)
+
+	fmt.Printf("upload metrics str: %s\n", string(metricsStr))
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsStr))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("upload metrics failed, statusCode: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *client) GetPodMetrics(metricsQry v1.MetricsQuery) (*v1.PodRawMetrics, error) {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s:8001/api/v1/stats/data", c.apiServerIP), nil)
+	if err != nil {
+		return nil, err
+	}
+	query := req.URL.Query()
+
+	query.Add("uid", fmt.Sprint(metricsQry.UID))
+	query.Add("timestamp", metricsQry.TimeStamp.UTC().Format("2006-01-02T15:04:05.99999999Z"))
+	query.Add("window", fmt.Sprint(metricsQry.Window))
+	req.URL.RawQuery = query.Encode()
+
+	resp, err := http.DefaultClient.Do(req)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[*v1.PodRawMetrics]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pod metrics failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
 }

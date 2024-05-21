@@ -1,6 +1,7 @@
-package controller
+package replicaset
 
 import (
+	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeclient"
 	"time"
@@ -53,47 +54,52 @@ func (rc *replicaSetController) deletePod(name, namespace string) {
 }
 
 func (rc *replicaSetController) syncReplicaSet() error {
-
-	for {
-		var reps []*v1.ReplicaSet
-		var allPods []*v1.Pod
-
-		reps, err := rc.client.GetAllReplicaSets()
-		if err != nil {
-			return err
-		}
-
-		allPods, err = rc.client.GetAllPods()
-		if err != nil {
-			return err
-		}
-
-		for _, rep := range reps {
-
-			allPodsMatch, err := rc.oneReplicaSetMatch(rep, allPods)
+	log.Printf("[RPS] start sync replica set")
+	go func() error {
+		for {
+			log.Printf("[RPS] sync replica set")
+			var reps []*v1.ReplicaSet
+			var allPods []*v1.Pod
+			log.Printf("[RPS] get all replica set")
+			reps, err := rc.client.GetAllReplicaSets()
 			if err != nil {
-				return err
+				log.Printf("[RPS] get all replica set failed, error: %s", err.Error())
 			}
-			toStart, err := rc.oneReplicaSetCheck(allPodsMatch, rep.Spec.Replicas)
-			if err != nil {
-				return err
-			}
-			for i := 1; i <= toStart; i++ {
 
-				pod := &v1.Pod{
-					TypeMeta:   rep.TypeMeta,
-					ObjectMeta: rep.Spec.Template.ObjectMeta,
-					Spec:       rep.Spec.Template.Spec,
+			allPods, err = rc.client.GetAllPods()
+			if err != nil {
+				log.Printf("[RPS] get all pods failed, error: %s", err.Error())
+			}
+
+			for _, rep := range reps {
+
+				allPodsMatch, err := rc.oneReplicaSetMatch(rep, allPods)
+				if err != nil {
+					log.Printf("[RPS] match replica set failed, error: %s", err.Error())
+					return err
 				}
-				rc.addPod(pod)
+				toStart, err := rc.oneReplicaSetCheck(allPodsMatch, rep.Spec.Replicas)
+				if err != nil {
+					log.Printf("[RPS] check replica set failed, error: %s", err.Error())
+					return err
+				}
+				for i := 1; i <= toStart; i++ {
+
+					pod := &v1.Pod{
+						TypeMeta:   rep.TypeMeta,
+						ObjectMeta: rep.Spec.Template.ObjectMeta,
+						Spec:       rep.Spec.Template.Spec,
+					}
+					rc.addPod(pod)
+				}
+
 			}
 
+			time.Sleep(5000 * time.Millisecond)
+
 		}
-
-		time.Sleep(5000 * time.Millisecond)
-
-	}
-
+	}()
+	return nil
 }
 
 func (rc *replicaSetController) oneReplicaSetMatch(rep *v1.ReplicaSet, allPods []*v1.Pod) ([]*v1.Pod, error) {
