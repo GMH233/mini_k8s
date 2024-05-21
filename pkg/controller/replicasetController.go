@@ -81,7 +81,10 @@ func (rc *replicaSetController) syncReplicaSet() error {
 			for i := 1; i <= toStart; i++ {
 
 				pod := &v1.Pod{
-					TypeMeta:   rep.TypeMeta,
+					TypeMeta: v1.TypeMeta{
+						Kind:       "Pod",
+						APIVersion: "v1",
+					},
 					ObjectMeta: rep.Spec.Template.ObjectMeta,
 					Spec:       rep.Spec.Template.Spec,
 				}

@@ -10,13 +10,13 @@ type EnvoyInit struct {
 }
 
 func NewEnvoyInit() (*EnvoyInit, error) {
-	envoy := &EnvoyInit{}
+	e := &EnvoyInit{}
 	ipt, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4))
 	if err != nil {
 		return nil, err
 	}
-	envoy.ipt = ipt
-	return envoy, nil
+	e.ipt = ipt
+	return e, nil
 }
 
 // 在当前容器的网络命名空间中配置iptables规则，使得所有出入站流量都被重定向到Envoy代理

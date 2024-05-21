@@ -95,6 +95,8 @@ type Container struct {
 	Resources ResourceRequirements `json:"resources,omitempty"`
 	// 卷挂载点
 	VolumeMounts []VolumeMount `json:"volumeMounts,omitempty"`
+
+	SecurityContext *SecurityContext `json:"securityContext,omitempty"`
 }
 
 // ports:
@@ -139,9 +141,22 @@ type PodSpec struct {
 	Volumes []Volume `json:"volumes,omitempty"`
 	// 容器声明
 	Containers []Container `json:"containers,omitempty"`
+
+	InitContainers []Container `json:"initContainers,omitempty"`
 	// 重启策略：仅由kubelet实现
 	RestartPolicy RestartPolicy `json:"restartPolicy,omitempty"`
+
+	//Sidecar *SidecarSpec `json:"sidecar,omitempty"`
 }
+
+type SecurityContext struct {
+	Privileged *bool  `json:"privileged,omitempty"`
+	RunAsUser  *int64 `json:"runAsUser,omitempty"`
+}
+
+//type SidecarSpec struct {
+//	Inject bool `json:"inject,omitempty"`
+//}
 
 type PodStatus struct {
 	Phase PodPhase `json:"phase,omitempty"`
