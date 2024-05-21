@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"minikubernetes/pkg/controller"
+	"minikubernetes/pkg/controller/replicaset"
 )
 
 func main() {
-	rsm := controller.NewReplicasetManager("10.119.12.123")
+	rsm := replicaset.NewReplicasetManager("192.168.1.10")
 	err := rsm.RunRSC()
 	if err != nil {
 		fmt.Println(err)
