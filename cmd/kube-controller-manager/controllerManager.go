@@ -1,11 +1,10 @@
 package main
 
 import (
-	"minikubernetes/pkg/controller/podautoscaler"
+	"minikubernetes/pkg/controller"
 )
 
 func main() {
-	hc := podautoscaler.NewHorizonalController("192.168.1.10")
-	hc.Run()
-
+	cm := controller.NewControllerManager("192.168.1.10")
+	cm.Run()
 }

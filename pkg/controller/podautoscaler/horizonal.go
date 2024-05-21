@@ -14,7 +14,7 @@ import (
 )
 
 type HorizonalController interface {
-	Run()
+	Run() error
 }
 type horizonalController struct {
 	kube_cli kubeclient.Client
@@ -25,12 +25,12 @@ func NewHorizonalController(apiServerIP string) HorizonalController {
 		kube_cli: kubeclient.NewClient(apiServerIP),
 	}
 }
-func (hc *horizonalController) Run() {
+func (hc *horizonalController) Run() error {
 
 	var interval int = 10
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt)
-	log.Printf("Start HPA Controller\n")
+	log.Printf("[HPA] Start HPA Controller\n")
 	// 现在只处理一个scaler的情况
 	// 如果之后有多个scaler，分别起协程定时处理
 	// 这样还得有一个类似pleg的东西，定时检查是否有新的scaler
@@ -50,19 +50,19 @@ func (hc *horizonalController) Run() {
 				allHPAScalers, err := hc.kube_cli.GetAllHPAScalers()
 				log.Printf("[HPA] Get all HorizontalPodAutoscaler: %v", allHPAScalers)
 				if err != nil {
-					log.Printf("Get all HorizontalPodAutoscaler failed, error: %v", err)
+					log.Printf("[HPA] Get all HorizontalPodAutoscaler failed, error: %v", err)
 					// return err
 				}
 				if len(allHPAScalers) == 0 {
-					log.Printf("No HorizontalPodAutoscaler found\n")
+					log.Printf("[HPA] No HorizontalPodAutoscaler found\n")
 					continue
 				}
 
 				// 2. 获取所有的Pod
 				allPods, err := hc.kube_cli.GetAllPods()
-				log.Printf("[Pod] Get all Pods: %v", allPods)
+				log.Printf("[HPA] Get all Pods: %v", allPods)
 				if err != nil {
-					log.Printf("Get all Pods failed, error: %v", err)
+					log.Printf("[HPA] Get all Pods failed, error: %v", err)
 					// return err
 				}
 
@@ -70,28 +70,28 @@ func (hc *horizonalController) Run() {
 					log.Printf("[HPA] Conducting HPA: %v\n", hpa)
 					reps, err := hc.kube_cli.GetAllReplicaSets()
 					if err != nil {
-						log.Printf("Get all ReplicaSets failed, error: %v\n", err)
+						log.Printf("[HPA] Get all ReplicaSets failed, error: %v\n", err)
 						// return err
 					}
 					// 根据hpa中spec的scaleTargetRef找到对应的ReplicaSet(目前只能有一个)
 					rep, err := oneMatchRps(hpa, reps)
 					if err != nil {
-						log.Printf("Get all ReplicaSets failed, error: %v\n", err)
+						log.Printf("[HPA] Get all ReplicaSets failed, error: %v\n", err)
 						// return err
 					}
 					if rep == nil {
-						log.Printf("ReplicaSet not found\n")
+						log.Printf("[HPA] ReplicaSet not found\n")
 						continue
 					}
 					log.Printf("[HPA] ReplicaSet Matched:   %v\n", rep)
 					// 根据ReplicaSet的labels筛选所有的Pod
 					podsMatch, err := oneMatchRpsLabels(rep, allPods)
 					if err != nil {
-						log.Printf("Get all Pods failed, error: %v\n", err)
+						log.Printf("[HPA] Get all Pods failed, error: %v\n", err)
 						// return err
 					}
 					if len(podsMatch) == 0 {
-						log.Printf("No matched pods!\n")
+						log.Printf("[HPA] No matched pods!\n")
 						continue
 					}
 
@@ -143,7 +143,8 @@ func (hc *horizonalController) Run() {
 	}()
 	// ctrl+c
 	<-signalCh
-	log.Printf("HPA Controller exit\n")
+	log.Printf("[HPA] HPA Controller exit\n")
+	return nil
 	// log.Printf("HPA Controller exit abnormaly")
 }
 
@@ -263,16 +264,16 @@ func genAvgCpuUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.Cli
 		// 一个pod的统计参数
 		oneMetrics, err := kube_cli.GetPodMetrics(oneQuery)
 		if err != nil {
-			log.Printf("Get Pod Metrics failed, error: %v\n", err)
+			log.Printf("[HPA] Get Pod Metrics failed, error: %v\n", err)
 			// return err
 		}
 
 		if oneMetrics == nil {
-			log.Printf("Pod Metrics not found\n")
+			log.Printf("[HPA] Pod Metrics not found\n")
 			continue
 		}
 		if len(oneMetrics.ContainerInfo) == 0 {
-			log.Printf("Wait for ContainerInfo to become valid\n")
+			log.Printf("[HPA] Wait for ContainerInfo to become valid\n")
 			continue
 		}
 
@@ -409,16 +410,16 @@ func genAvgMemoryUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.
 		// 一个pod的统计参数
 		oneMetrics, err := kube_cli.GetPodMetrics(oneQuery)
 		if err != nil {
-			log.Printf("Get Pod Metrics failed, error: %v\n", err)
+			log.Printf("[HPA] Get Pod Metrics failed, error: %v\n", err)
 			// return err
 		}
 
 		if oneMetrics == nil {
-			log.Printf("Pod Metrics not found\n")
+			log.Printf("[HPA] Pod Metrics not found\n")
 			continue
 		}
 		if len(oneMetrics.ContainerInfo) == 0 {
-			log.Printf("Wait for ContainerInfo to become valid\n")
+			log.Printf("[HPA] Wait for ContainerInfo to become valid\n")
 			continue
 		}
 
@@ -465,7 +466,7 @@ func oneMatchRps(hpa *v1.HorizontalPodAutoscaler, reps []*v1.ReplicaSet) (*v1.Re
 			return rep, nil
 		}
 	}
-	return nil, fmt.Errorf("ReplicaSet not found")
+	return nil, fmt.Errorf("[HPA] ReplicaSet not found")
 
 }
 

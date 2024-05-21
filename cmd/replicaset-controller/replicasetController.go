@@ -1,11 +1,11 @@
 package main
 
 import (
-	"minikubernetes/pkg/controller"
+	"minikubernetes/pkg/controller/replicaset"
 )
 
 func main() {
-	manager := controller.NewReplicasetManager("10.119.12.123")
+	manager := replicaset.NewReplicasetManager("192.168.1.10")
 	err := manager.RunRSC()
 	if err != nil {
 		return
