@@ -21,6 +21,9 @@ type Client interface {
 	GetAllNodes() ([]*v1.Node, error)
 	AddPodToNode(pod v1.Pod, node v1.Node) error
 
+	// GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error)
+	UpdateReplicaSet(name, namespace string, repNum int) error
+	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
 	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
 }
 
@@ -217,6 +220,68 @@ func (c *client) AddPodToNode(pod v1.Pod, node v1.Node) error {
 		return fmt.Errorf("add pod to node error: %v", resp.Status)
 	}
 	return nil
+}
+
+// 可能没用到
+// func (c *client) GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error) {
+// 	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name))
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer resp.Body.Close()
+// 	body, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	var baseResponse v1.BaseResponse[v1.ReplicaSet]
+// 	err = json.Unmarshal(body, &baseResponse)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if resp.StatusCode != http.StatusOK {
+// 		return nil, fmt.Errorf("get replica set error: %v", baseResponse.Error)
+// 	}
+// 	return &baseResponse.Data, nil
+// }
+
+func (c *client) UpdateReplicaSet(name, namespace string, repNum int) error {
+	req, err := http.NewRequest("PUT", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update replica set error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/scaling", c.apiServerIP))
+
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get hpa scalers failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
 }
 
 func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {

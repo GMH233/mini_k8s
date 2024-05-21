@@ -274,14 +274,14 @@ type HorizontalPodAutoscalerBehavior struct {
 	// No stabilization is used.
 	// +optional
 	// 现在扩缩容都只各支持一种策略，默认策略是
-	ScaleUp HPAScalingPolicy `json:"scaleUp,omitempty"`
+	ScaleUp *HPAScalingPolicy `json:"scaleUp,omitempty"`
 
 	// scaleDown is scaling policy for scaling Down.
 	// If not set, the default value is to allow to scale down to minReplicas pods, with a
 	// 300 second stabilization window (i.e., the highest recommendation for
 	// the last 300sec is used).
 	// +optional
-	ScaleDown HPAScalingPolicy `json:"scaleDown,omitempty"`
+	ScaleDown *HPAScalingPolicy `json:"scaleDown,omitempty"`
 }
 
 // HPAScalingPolicyType is the type of the policy which could be used while making scaling decisions.
