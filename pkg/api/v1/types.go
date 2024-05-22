@@ -429,7 +429,7 @@ type NodeStatus struct {
 	Address string `json:"address,omitempty"`
 }
 
-type SidecarMapping map[string]SidecarEndpoints
+type SidecarMapping map[string][]SidecarEndpoints
 
 type SidecarEndpoints struct {
 	Weight    *int32           `json:"weight,omitempty"`
