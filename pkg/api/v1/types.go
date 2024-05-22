@@ -428,3 +428,47 @@ type NodeStatus struct {
 	// IP地址
 	Address string `json:"address,omitempty"`
 }
+
+type SidecarMapping map[string]SidecarEndpoints
+
+type SidecarEndpoints struct {
+	Weight    *int32           `json:"weight,omitempty"`
+	URL       *string          `json:"url,omitempty"`
+	Endpoints []SingleEndpoint `json:"endpoints,omitempty"`
+}
+
+type SingleEndpoint struct {
+	IP         string `json:"ip"`
+	TargetPort int32  `json:"targetPort"`
+}
+
+type VirtualService struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+	Spec       VirtualServiceSpec `json:"spec,omitempty"`
+}
+
+type VirtualServiceSpec struct {
+	ServiceRef string                 `json:"serviceRef,omitempty"`
+	Port       int32                  `json:"port,omitempty"`
+	Subsets    []VirtualServiceSubset `json:"subsets,omitempty"`
+}
+
+type VirtualServiceSubset struct {
+	Name string `json:"name,omitempty"`
+	// Weight subset中的所有endpoint都有相同的权重
+	Weight *int32 `json:"weight,omitempty"`
+	// URL 路径为URL时，转发到本subset中的endpoint，支持带正则表达式的路径
+	URL *string `json:"url,omitempty"`
+}
+
+type Subset struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+	Spec       SubsetSpec `json:"spec,omitempty"`
+}
+
+type SubsetSpec struct {
+	// pod名
+	Pods []string `json:"pods,omitempty"`
+}
