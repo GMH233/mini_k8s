@@ -358,7 +358,7 @@ func (ser *kubeApiServer) AddScalingHandler(c *gin.Context) {
 		hpa.Spec.MinReplicas = 1
 	}
 
-	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", hpa.Namespace, hpa.Name)
+	hpaKey := fmt.Sprintf("/registry/namespaces/%s/scaling/%s", hpa.Namespace, hpa.Name)
 	allhpaKey := fmt.Sprintf("/registry/scaling/%s", hpa.UID)
 
 	// 检查是否有重复的
@@ -409,7 +409,7 @@ func (ser *kubeApiServer) DeleteScalingHandler(c *gin.Context) {
 		})
 		return
 	}
-	hpaKey := fmt.Sprintf("/registry/namespace/%s/scaling/%s", namespace, name)
+	hpaKey := fmt.Sprintf("/registry/namespaces/%s/scaling/%s", namespace, name)
 	hpaUid, err := ser.store_cli.Get(hpaKey)
 
 	if hpaUid == "" {
@@ -1187,7 +1187,7 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 	}
 
 	// 存uid
-	namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, service.Name)
+	namespaceSvcKey := fmt.Sprintf("/registry/namespaces/%s/services/%s", namespace, service.Name)
 
 	// 检查service是否已经存在
 	result, err := s.store_cli.Get(namespaceSvcKey)
@@ -1287,7 +1287,7 @@ func (s *kubeApiServer) DeleteServiceHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, serviceName)
+	namespaceSvcKey := fmt.Sprintf("/registry/namespaces/%s/services/%s", namespace, serviceName)
 	uid, err := s.store_cli.Get(namespaceSvcKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.Service]{
@@ -1459,7 +1459,7 @@ func (s *kubeApiServer) AddDNSHandler(c *gin.Context) {
 	dns.Namespace = namespace
 
 	// 检查dns是否已经存在
-	namespaceDNSKey := fmt.Sprintf("/registry/%s/dns/%s", dns.Namespace, dns.Name)
+	namespaceDNSKey := fmt.Sprintf("/registry/namespaces/%s/dns/%s", dns.Namespace, dns.Name)
 	uid, err := s.store_cli.Get(namespaceDNSKey)
 	if err == nil && uid != "" {
 		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.DNS]{
@@ -1496,7 +1496,7 @@ func (s *kubeApiServer) AddDNSHandler(c *gin.Context) {
 	for _, rule := range dns.Spec.Rules {
 		for _, path := range rule.Paths {
 			svcName := path.Backend.Service.Name
-			namespaceSvcKey := fmt.Sprintf("/registry/%s/services/%s", namespace, svcName)
+			namespaceSvcKey := fmt.Sprintf("/registry/namespaces/%s/services/%s", namespace, svcName)
 			uid, err := s.store_cli.Get(namespaceSvcKey)
 			if err != nil || uid == "" {
 				c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.DNS]{
@@ -1590,7 +1590,7 @@ func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceDNSKey := fmt.Sprintf("/registry/%s/dns/%s", namespace, dnsName)
+	namespaceDNSKey := fmt.Sprintf("/registry/namespaces/%s/dns/%s", namespace, dnsName)
 	uid, err := s.store_cli.Get(namespaceDNSKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.DNS]{
@@ -2042,7 +2042,7 @@ func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
 	prefix := "/registry"
 
 	all_replicaset_keystr := prefix + "/replicaset/" + string(rps.ObjectMeta.UID)
-	namespace_replicaset_keystr := prefix + "/namespace/" + Default_Namespace + "/replicasets/" + rps_name
+	namespace_replicaset_keystr := prefix + "/namespaces/" + Default_Namespace + "/replicasets/" + rps_name
 
 	res, err := ser.store_cli.Get(namespace_replicaset_keystr)
 	if res != "" || err != nil {
@@ -2099,7 +2099,7 @@ func (s *kubeApiServer) GetReplicaSetHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", namespace, rpsName)
+	namespaceRpsKey := fmt.Sprintf("/registry/namespaces/%s/replicasets/%s", namespace, rpsName)
 	uid, err := s.store_cli.Get(namespaceRpsKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
@@ -2157,7 +2157,7 @@ func (s *kubeApiServer) UpdateReplicaSetHandler(c *gin.Context) {
 	}
 
 	// 从etcd中获取replica set
-	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", namespace, rpsName)
+	namespaceRpsKey := fmt.Sprintf("/registry/namespaces/%s/replicasets/%s", namespace, rpsName)
 	uid, err := s.store_cli.Get(namespaceRpsKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
@@ -2217,7 +2217,7 @@ func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
 		})
 		return
 	}
-	namespaceRpsKey := fmt.Sprintf("/registry/namespace/%s/replicasets/%s", Default_Namespace, rpsName)
+	namespaceRpsKey := fmt.Sprintf("/registry/namespaces/%s/replicasets/%s", Default_Namespace, rpsName)
 	uid, err := ser.store_cli.Get(namespaceRpsKey)
 	if err != nil || uid == "" {
 		con.JSON(http.StatusNotFound, v1.BaseResponse[*v1.ReplicaSet]{
@@ -2311,7 +2311,7 @@ func (s *kubeApiServer) AddVirtualServiceHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceKey := fmt.Sprintf("/registry/%s/virtualservices/%s", namespace, vs.Name)
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/virtualservices/%s", namespace, vs.Name)
 	uid, err := s.store_cli.Get(namespaceKey)
 	if err == nil && uid != "" {
 		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.VirtualService]{
@@ -2321,7 +2321,7 @@ func (s *kubeApiServer) AddVirtualServiceHandler(c *gin.Context) {
 	}
 
 	svcName := vs.Spec.ServiceRef
-	svcUID, err := s.store_cli.Get(fmt.Sprintf("/registry/%s/services/%s", namespace, svcName))
+	svcUID, err := s.store_cli.Get(fmt.Sprintf("/registry/namespaces/%s/services/%s", namespace, svcName))
 	if err != nil || svcUID == "" {
 		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.VirtualService]{
 			Error: fmt.Sprintf("service %s/%s not found", namespace, svcName),
@@ -2352,7 +2352,7 @@ func (s *kubeApiServer) AddVirtualServiceHandler(c *gin.Context) {
 	}
 
 	for _, subset := range vs.Spec.Subsets {
-		subsetUID, err := s.store_cli.Get(fmt.Sprintf("/registry/%s/subsets/%s", namespace, subset.Name))
+		subsetUID, err := s.store_cli.Get(fmt.Sprintf("/registry/namespaces/%s/subsets/%s", namespace, subset.Name))
 		if err != nil || subsetUID == "" {
 			c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.VirtualService]{
 				Error: fmt.Sprintf("subset %s/%s not found", namespace, subset.Name),
@@ -2402,7 +2402,7 @@ func (s *kubeApiServer) DeleteVirtualServiceHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceKey := fmt.Sprintf("/registry/%s/virtualservices/%s", namespace, vsName)
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/virtualservices/%s", namespace, vsName)
 	uid, err := s.store_cli.Get(namespaceKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.VirtualService]{
@@ -2505,7 +2505,7 @@ func (s *kubeApiServer) AddSubsetHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceKey := fmt.Sprintf("/registry/%s/subsets/%s", namespace, subset.Name)
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/subsets/%s", namespace, subset.Name)
 	uid, err := s.store_cli.Get(namespaceKey)
 	if err == nil && uid != "" {
 		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Subset]{
@@ -2587,7 +2587,7 @@ func (s *kubeApiServer) GetSubsetHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceKey := fmt.Sprintf("/registry/%s/subsets/%s", namespace, subsetName)
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/subsets/%s", namespace, subsetName)
 	uid, err := s.store_cli.Get(namespaceKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.Subset]{
@@ -2615,7 +2615,7 @@ func (s *kubeApiServer) DeleteSubsetHandler(c *gin.Context) {
 		})
 		return
 	}
-	namespaceKey := fmt.Sprintf("/registry/%s/subsets/%s", namespace, subsetName)
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/subsets/%s", namespace, subsetName)
 	uid, err := s.store_cli.Get(namespaceKey)
 	if err != nil || uid == "" {
 		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.Subset]{
