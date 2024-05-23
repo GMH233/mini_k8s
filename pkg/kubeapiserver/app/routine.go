@@ -88,6 +88,8 @@ const (
 	AllSubsetsURL       = "/api/v1/subsets"
 	NamespaceSubsetsURL = "/api/v1/namespaces/:namespace/subsets"
 	SingleSubsetURL     = "/api/v1/namespaces/:namespace/subsets/:subsetname"
+
+	SidecarMappingURL = "/api/v1/sidecar-mapping"
 )
 
 /* NAMESPACE
@@ -229,6 +231,9 @@ func (ser *kubeApiServer) binder() {
 	ser.router.POST(NamespaceSubsetsURL, ser.AddSubsetHandler)
 	ser.router.DELETE(SingleSubsetURL, ser.DeleteSubsetHandler)
 	ser.router.GET(SingleSubsetURL, ser.GetSubsetHandler)
+
+	ser.router.GET(SidecarMappingURL, ser.GetSidecarMapping)
+	ser.router.POST(SidecarMappingURL, ser.SaveSidecarMapping)
 }
 
 func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
@@ -2571,5 +2576,51 @@ func (s *kubeApiServer) DeleteSubsetHandler(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.Subset]{
 		Data: &subset,
+	})
+}
+
+func (s *kubeApiServer) SaveSidecarMapping(c *gin.Context) {
+	var mapping v1.SidecarMapping
+	err := c.ShouldBind(&mapping)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.SidecarMapping]{
+			Error: "invalid sidecar mapping json",
+		})
+		return
+	}
+	key := "/registry/sidecar-mapping"
+	mappingJson, err := json.Marshal(mapping)
+	err = s.store_cli.Set(key, string(mappingJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.SidecarMapping]{
+			Error: "error in writing sidecar mapping to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.SidecarMapping]{})
+}
+
+func (s *kubeApiServer) GetSidecarMapping(c *gin.Context) {
+	key := "/registry/sidecar-mapping"
+	mappingJson, err := s.store_cli.Get(key)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.SidecarMapping]{
+			Error: "error in reading sidecar mapping from etcd",
+		})
+		return
+	}
+	if mappingJson == "" {
+		mappingJson = "{}"
+	}
+	var mapping v1.SidecarMapping
+	err = json.Unmarshal([]byte(mappingJson), &mapping)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.SidecarMapping]{
+			Error: "error in json unmarshal",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.SidecarMapping]{
+		Data: &mapping,
 	})
 }
