@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"net/http"
 	"time"
@@ -107,6 +108,8 @@ type kubeApiServer struct {
 	port        int
 	store_cli   etcd.Store
 	metrics_cli metrics.MetricsDatabase
+
+	lock sync.Mutex
 }
 
 type KubeApiServer interface {
@@ -293,7 +296,8 @@ func (s *kubeApiServer) AddStatsDataHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetAllScalingHandler(c *gin.Context) {
-
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	allSca, err := s.getAllScalingsFromEtcd()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.HorizontalPodAutoscaler]{
@@ -323,6 +327,8 @@ func (s *kubeApiServer) getAllScalingsFromEtcd() ([]*v1.HorizontalPodAutoscaler,
 }
 
 func (ser *kubeApiServer) AddScalingHandler(c *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	var hpa v1.HorizontalPodAutoscaler
 	err := c.ShouldBind(&hpa)
 	if err != nil {
@@ -393,6 +399,8 @@ func (ser *kubeApiServer) AddScalingHandler(c *gin.Context) {
 }
 
 func (ser *kubeApiServer) DeleteScalingHandler(c *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	namespace := c.Params.ByName("namespace")
 	name := c.Params.ByName("name")
 	if namespace == "" || name == "" {
@@ -475,6 +483,8 @@ func PutNodeStatusHandler(con *gin.Context) {
 // We set namespace to "default" right now.
 
 func (ser *kubeApiServer) GetAllPodsHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("GetAllPods")
 
 	all_pod_str := make([]v1.Pod, 0)
@@ -523,11 +533,13 @@ func (ser *kubeApiServer) GetAllPodsHandler(con *gin.Context) {
 
 }
 func (ser *kubeApiServer) GetPodsByNamespaceHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("GetPodsByNamespace")
 
 	np := con.Params.ByName("namespace")
 	if np == "" {
-		log.Panicln("error in parsing namespace ")
+		//log.Panicln("error in parsing namespace ")
 		con.JSON(http.StatusNotFound, gin.H{
 			"error": "error in parsing namespace ",
 		})
@@ -592,6 +604,8 @@ func (ser *kubeApiServer) GetPodsByNamespaceHandler(con *gin.Context) {
 
 }
 func (ser *kubeApiServer) GetPodHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("GetPod")
 
 	np := con.Params.ByName("namespace")
@@ -638,6 +652,8 @@ func (ser *kubeApiServer) GetPodHandler(con *gin.Context) {
 }
 func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	// assign a pod to a node
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("Adding a new pod")
 
 	var pod v1.Pod
@@ -737,6 +753,8 @@ func UpdatePodHandler(con *gin.Context) {
 
 }
 func (ser *kubeApiServer) DeletePodHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("DeletePod")
 
 	np := con.Params.ByName("namespace")
@@ -814,7 +832,8 @@ func (ser *kubeApiServer) DeletePodHandler(con *gin.Context) {
 }
 
 func (ser *kubeApiServer) GetPodStatusHandler(con *gin.Context) {
-
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("GetPodStatus")
 
 	// default here
@@ -865,6 +884,8 @@ func (ser *kubeApiServer) GetPodStatusHandler(con *gin.Context) {
 }
 
 func (ser *kubeApiServer) PutPodStatusHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("PutPodStatus")
 
 	np := con.Params.ByName("namespace")
@@ -940,13 +961,14 @@ func (ser *kubeApiServer) PutPodStatusHandler(con *gin.Context) {
 }
 
 func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
-
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	// first parse nodename
 	log.Println("GetPodsByNode")
 
 	node_name := con.Params.ByName("nodename")
 	if node_name == "" {
-		log.Panicln("error in parsing nodename ")
+		//log.Panicln("error in parsing nodename ")
 		con.JSON(http.StatusNotFound, gin.H{
 			"error": "error in parsing nodename ",
 		})
@@ -1036,6 +1058,8 @@ func (s *kubeApiServer) GetAllServicesHandler(c *gin.Context) {
 	//	}
 	//	services = append(services, service)
 	//}
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	services, err := s.getAllServicesFromEtcd()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]v1.Service]{
@@ -1116,6 +1140,8 @@ func (s *kubeApiServer) checkTypeAndPorts(service *v1.Service) error {
 }
 
 func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	var service v1.Service
 	err := c.ShouldBind(&service)
 	if err != nil {
@@ -1251,6 +1277,8 @@ func (s *kubeApiServer) AddServiceHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) DeleteServiceHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	namespace := c.Param("namespace")
 	serviceName := c.Param("servicename")
 	if namespace == "" || serviceName == "" {
@@ -1349,6 +1377,8 @@ func (s *kubeApiServer) getAllDNSFromEtcd() ([]*v1.DNS, error) {
 }
 
 func (s *kubeApiServer) GetAllDNSHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	allDNS, err := s.getAllDNSFromEtcd()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.DNS]{
@@ -1400,6 +1430,8 @@ func (s *kubeApiServer) validateDNS(dns *v1.DNS, urlNamespace string) error {
 }
 
 func (s *kubeApiServer) AddDNSHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	var dns v1.DNS
 	err := c.ShouldBind(&dns)
 	if err != nil {
@@ -1548,6 +1580,8 @@ func (s *kubeApiServer) AddDNSHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	namespace := c.Param("namespace")
 	dnsName := c.Param("dnsname")
 	if namespace == "" || dnsName == "" {
@@ -1634,6 +1668,8 @@ func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	address := c.Query("address")
 	if net.ParseIP(address) == nil {
 		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
@@ -1712,6 +1748,8 @@ func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) UnregisterNodeHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	nodeName := c.Query("nodename")
 	namespace := Default_Namespace
 	if nodeName == "" {
@@ -1781,6 +1819,8 @@ func (s *kubeApiServer) UnregisterNodeHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetAllNodesHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	allNodeKey := "/registry/nodes"
 	res, err := s.store_cli.GetSubKeysValues(allNodeKey)
 	if err != nil {
@@ -1810,6 +1850,8 @@ func (s *kubeApiServer) GetAllNodesHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) SchedulePodToNodeHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	podUid := c.Query("podUid")
 	nodeName := c.Query("nodename")
 	if podUid == "" || nodeName == "" {
@@ -1868,6 +1910,8 @@ func (s *kubeApiServer) SchedulePodToNodeHandler(c *gin.Context) {
 
 func (s *kubeApiServer) GetUnscheduledPodHandler(c *gin.Context) {
 	// 获取所有pod
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	allPodKey := "/registry/pods"
 	res, err := s.store_cli.GetSubKeysValues(allPodKey)
 	if err != nil {
@@ -1903,6 +1947,8 @@ func (s *kubeApiServer) GetUnscheduledPodHandler(c *gin.Context) {
 }
 
 func (ser *kubeApiServer) GetAllReplicaSetsHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("GetAllReplicaSets")
 	all_replicaset_str := make([]v1.ReplicaSet, 0)
 	prefix := "/registry"
@@ -1961,6 +2007,8 @@ func (ser *kubeApiServer) GetAllReplicaSetsHandler(con *gin.Context) {
 }
 
 func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	log.Println("Adding a new replica set")
 	var rps v1.ReplicaSet
 	err := con.ShouldBind(&rps)
@@ -2041,6 +2089,8 @@ func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
 }
 
 func (s *kubeApiServer) GetReplicaSetHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	namespace := c.Param("namespace")
 	rpsName := c.Param("replicasetname")
 	if namespace == "" || rpsName == "" {
@@ -2083,7 +2133,8 @@ func (s *kubeApiServer) GetReplicaSetHandler(c *gin.Context) {
 func (s *kubeApiServer) UpdateReplicaSetHandler(c *gin.Context) {
 	// 目前的更新方式
 	// 1.更新replica set的replicas数量
-
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	// 获取name . namespace 和待更新的数量int
 	namespace := c.Param("namespace")
 	rpsName := c.Param("replicasetname")
@@ -2156,6 +2207,8 @@ func (s *kubeApiServer) UpdateReplicaSetHandler(c *gin.Context) {
 }
 
 func (ser *kubeApiServer) DeleteReplicaSetHandler(con *gin.Context) {
+	ser.lock.Lock()
+	defer ser.lock.Unlock()
 	namespace := con.Param("namespace")
 	rpsName := con.Param("replicasetname")
 	if namespace == "" || rpsName == "" {
@@ -2234,6 +2287,8 @@ func (s *kubeApiServer) validateVirtualService(vs *v1.VirtualService, urlNamespa
 }
 
 func (s *kubeApiServer) AddVirtualServiceHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	var vs v1.VirtualService
 	err := c.ShouldBind(&vs)
 	if err != nil {
@@ -2337,6 +2392,8 @@ func (s *kubeApiServer) AddVirtualServiceHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) DeleteVirtualServiceHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	namespace := c.Param("namespace")
 	vsName := c.Param("virtualservicename")
 	if namespace == "" || vsName == "" {
@@ -2377,6 +2434,8 @@ func (s *kubeApiServer) DeleteVirtualServiceHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetAllVirtualServicesHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	allKey := "/registry/virtualservices"
 	res, err := s.store_cli.GetSubKeysValues(allKey)
 	if err != nil {
@@ -2422,6 +2481,8 @@ func (s *kubeApiServer) validateSubset(subset *v1.Subset, namespace string) erro
 }
 
 func (s *kubeApiServer) AddSubsetHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	var subset v1.Subset
 	err := c.ShouldBind(&subset)
 	if err != nil {
@@ -2488,6 +2549,8 @@ func (s *kubeApiServer) AddSubsetHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetAllSubsetsHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	allKey := "/registry/subsets"
 	res, err := s.store_cli.GetSubKeysValues(allKey)
 	if err != nil {
@@ -2514,6 +2577,8 @@ func (s *kubeApiServer) GetAllSubsetsHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetSubsetHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	namespace := c.Param("namespace")
 	subsetName := c.Param("subsetname")
 	if namespace == "" || subsetName == "" {
@@ -2540,6 +2605,8 @@ func (s *kubeApiServer) GetSubsetHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) DeleteSubsetHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	namespace := c.Param("namespace")
 	subsetName := c.Param("subsetname")
 	if namespace == "" || subsetName == "" {
@@ -2580,6 +2647,8 @@ func (s *kubeApiServer) DeleteSubsetHandler(c *gin.Context) {
 }
 
 func (s *kubeApiServer) SaveSidecarMapping(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	var mapping v1.SidecarMapping
 	err := c.ShouldBind(&mapping)
 	if err != nil {
@@ -2601,6 +2670,8 @@ func (s *kubeApiServer) SaveSidecarMapping(c *gin.Context) {
 }
 
 func (s *kubeApiServer) GetSidecarMapping(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	key := "/registry/sidecar-mapping"
 	mappingJson, err := s.store_cli.Get(key)
 	if err != nil {
