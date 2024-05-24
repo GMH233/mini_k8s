@@ -26,6 +26,8 @@ type Client interface {
 	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
 	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
 	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
+
+	GetSidecarMapping() (v1.SidecarMapping, error)
 }
 
 type client struct {
@@ -338,6 +340,27 @@ func (c *client) GetPodMetrics(metricsQry v1.MetricsQuery) (*v1.PodRawMetrics, e
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get pod metrics failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetSidecarMapping() (v1.SidecarMapping, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/sidecar-mapping", c.apiServerIP))
+	if err != nil {
+		return v1.SidecarMapping{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return v1.SidecarMapping{}, err
+	}
+	var baseResponse v1.BaseResponse[v1.SidecarMapping]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return v1.SidecarMapping{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return v1.SidecarMapping{}, fmt.Errorf("get sidecar mapping failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
 }

@@ -2506,13 +2506,14 @@ func (s *kubeApiServer) AddSubsetHandler(c *gin.Context) {
 		return
 	}
 	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/subsets/%s", namespace, subset.Name)
-	uid, err := s.store_cli.Get(namespaceKey)
-	if err == nil && uid != "" {
-		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Subset]{
-			Error: fmt.Sprintf("subset %s/%s already exists", namespace, subset.Name),
-		})
-		return
-	}
+	// uncomment to disable update
+	//uid, err := s.store_cli.Get(namespaceKey)
+	//if err == nil && uid != "" {
+	//	c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Subset]{
+	//		Error: fmt.Sprintf("subset %s/%s already exists", namespace, subset.Name),
+	//	})
+	//	return
+	//}
 
 	for _, podName := range subset.Spec.Pods {
 		podUID, err := s.store_cli.Get(fmt.Sprintf("/registry/namespaces/%s/pods/%s", namespace, podName))
