@@ -3,6 +3,7 @@ module minikubernetes
 go 1.22
 
 require (
+	github.com/coreos/go-iptables v0.7.0
 	github.com/docker/docker v26.0.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/google/uuid v1.6.0
