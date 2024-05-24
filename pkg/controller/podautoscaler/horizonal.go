@@ -25,9 +25,31 @@ func NewHorizonalController(apiServerIP string) HorizonalController {
 		kube_cli: kubeclient.NewClient(apiServerIP),
 	}
 }
+
+const (
+	defaultSyncHPAInterval = 10
+	defaultPeriod          = 60
+	defaultScaleWindow     = 15
+)
+
+var defaultUpscalePolicy = v1.HPAScalingPolicy{
+	Type:          v1.PodsScalingPolicy,
+	Value:         1,
+	PeriodSeconds: defaultPeriod,
+}
+
+var defaultDownscalePolicy = v1.HPAScalingPolicy{
+	Type:          v1.PodsScalingPolicy,
+	Value:         1,
+	PeriodSeconds: defaultPeriod,
+}
+
 func (hc *horizonalController) Run() error {
 
-	var interval int = 10
+	prevActTimeMap := make(map[v1.UID]time.Time)
+
+	// 定时同步hpa的时间间隔
+	var defaultSyncHPAInterval int = 10
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt)
 	log.Printf("[HPA] Start HPA Controller\n")
@@ -35,7 +57,7 @@ func (hc *horizonalController) Run() error {
 	// 如果之后有多个scaler，分别起协程定时处理
 	// 这样还得有一个类似pleg的东西，定时检查是否有新的scaler
 	go func() {
-		syncTicker := time.NewTicker(time.Duration(interval) * time.Second)
+		syncTicker := time.NewTicker(time.Duration(defaultSyncHPAInterval) * time.Second)
 		defer syncTicker.Stop()
 		defer log.Printf("Stop HPA Controller\n")
 		for {
@@ -126,14 +148,26 @@ func (hc *horizonalController) Run() error {
 					}
 
 					if selectPolicy == "Max" {
-						if maxRpsNumAprd != curRpsNum && maxRpsNumAprd != 0 {
-							// 通知apiserver改变ReplicaSet的副本数
-							err := hc.changeRpsPodNum(rep.Name, rep.Namespace, maxRpsNumAprd)
-							if err != nil {
-								log.Printf("[HPA] Change ReplicaSet Pod Num failed, error: %v\n", err)
-							}
+
+						scaleWindowSz := hpa.Spec.ScaleWindowSeconds
+						if scaleWindowSz == 0 {
+							scaleWindowSz = defaultScaleWindow
+						}
+
+						// 如果当前的时间戳和上一次的时间戳相差小于一个周期，那么不进行操作
+						if time.Now().Sub(prevActTimeMap[hpa.UID]) < time.Duration(scaleWindowSz)*time.Second {
+							log.Printf("[HPA] In the same period, no need to change\n")
 						} else {
-							log.Printf("[HPA] No need to change\n")
+							prevActTimeMap[hpa.UID] = time.Now()
+							if maxRpsNumAprd != curRpsNum && maxRpsNumAprd != 0 {
+								// 通知apiserver改变ReplicaSet的副本数
+								err := hc.changeRpsPodNum(rep.Name, rep.Namespace, maxRpsNumAprd)
+								if err != nil {
+									log.Printf("[HPA] Change ReplicaSet Pod Num failed, error: %v\n", err)
+								}
+							} else {
+								log.Printf("[HPA] No need to change\n")
+							}
 						}
 					}
 				}
@@ -171,6 +205,15 @@ func genRepNumFromCPU(hpa *v1.HorizontalPodAutoscaler, metricTypePos int, podsMa
 	//需要取得hpa中相关的策略字段，以获取相关的统计窗口大小
 	upBehavior := hpa.Spec.Behavior.ScaleUp
 	downBehavior := hpa.Spec.Behavior.ScaleDown
+
+	// 防御性编程
+	if upBehavior == nil {
+		upBehavior = &defaultUpscalePolicy
+	}
+	if downBehavior == nil {
+		downBehavior = &defaultDownscalePolicy
+	}
+
 	// 这里假设apiserver在创建的时候就处理了默认策略
 
 	upPeriod := upBehavior.PeriodSeconds
@@ -314,6 +357,13 @@ func genRepNumFromMemory(hpa *v1.HorizontalPodAutoscaler, metricPos int, podsMat
 	//需要取得hpa中相关的策略字段，以获取相关的统计窗口大小
 	upBehavior := hpa.Spec.Behavior.ScaleUp
 	downBehavior := hpa.Spec.Behavior.ScaleDown
+	// 防御性编程
+	if upBehavior == nil {
+		upBehavior = &defaultUpscalePolicy
+	}
+	if downBehavior == nil {
+		downBehavior = &defaultDownscalePolicy
+	}
 
 	upPeriod := upBehavior.PeriodSeconds
 	downPeriod := downBehavior.PeriodSeconds

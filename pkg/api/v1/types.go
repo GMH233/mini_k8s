@@ -211,6 +211,9 @@ type HorizontalPodAutoscalerSpec struct {
 	// 期望的最大副本数
 	MaxReplicas int32 `json:"maxReplicas"`
 
+	// 扩缩容的时间窗口
+	ScaleWindowSeconds int32 `json:"scaleWindowSeconds,omitempty"`
+
 	// 监控的资源指标
 	// Metrics []MetricSpec `json:"metrics,omitempty"`
 	Metrics []ResourceMetricSource `json:"metrics,omitempty"`
@@ -267,20 +270,15 @@ const (
 // HorizontalPodAutoscalerBehavior configures the scaling behavior of the target
 // in both Up and Down directions (scaleUp and scaleDown fields respectively).
 type HorizontalPodAutoscalerBehavior struct {
-	// scaleUp is scaling policy for scaling Up.
-	// If not set, the default value is the higher of:
-	//   * increase no more than 4 pods per 60 seconds
-	//   * double the number of pods per 60 seconds
-	// No stabilization is used.
-	// +optional
-	// 现在扩缩容都只各支持一种策略，默认策略是
+	// 扩容的策略
+	// 现在扩缩容都只各支持一种策略
 	ScaleUp *HPAScalingPolicy `json:"scaleUp,omitempty"`
 
 	// scaleDown is scaling policy for scaling Down.
 	// If not set, the default value is to allow to scale down to minReplicas pods, with a
 	// 300 second stabilization window (i.e., the highest recommendation for
 	// the last 300sec is used).
-	// +optional
+	// 缩容的策略
 	ScaleDown *HPAScalingPolicy `json:"scaleDown,omitempty"`
 }
 
