@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"minikubernetes/pkg/microservice/envoy"
 	"os"
 	"strconv"
 	"strings"
@@ -140,6 +141,13 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 		panic(err)
 	}
 
+	for _, c := range pod.Spec.InitContainers {
+		err = rm.createInitContainer(&c, PauseId)
+		if err != nil {
+			return err
+		}
+	}
+
 	containerList := pod.Spec.Containers
 	for _, container := range containerList {
 		volumes, err := rm.createVolumeDir(pod)
@@ -256,6 +264,61 @@ func (rm *runtimeManager) getPortBindings(containers []v1.Container) nat.PortMap
 	return portBindings
 }
 
+// 目前init container只是为了支持sidecar，简化了很多逻辑
+func (rm *runtimeManager) createInitContainer(c *v1.Container, pauseID string) error {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	exist, err := rm.checkImages(c.Image)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		_, err = cli.ImagePull(context.Background(), c.Image, image.PullOptions{})
+		if err != nil {
+			return err
+		}
+	}
+	hostConfig := &container.HostConfig{
+		NetworkMode: container.NetworkMode("container:" + pauseID),
+	}
+	if c.SecurityContext != nil {
+		if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
+			hostConfig.Privileged = *c.SecurityContext.Privileged
+		}
+	}
+	// run container
+	resp, err := cli.ContainerCreate(context.Background(), &container.Config{
+		Image: c.Image,
+		Tty:   true,
+	}, hostConfig, nil, nil, "")
+	if err != nil {
+		return err
+	}
+	if err = cli.ContainerStart(context.Background(), resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+	// wait for init container to finish
+	statusCh, errCh := cli.ContainerWait(context.Background(), resp.ID, container.WaitConditionNotRunning)
+	select {
+	case err = <-errCh:
+		if err != nil {
+			return err
+		}
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			return fmt.Errorf("init container exited with status %d", status.StatusCode)
+		}
+	}
+	// delete init container
+	if err = cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodID v1.UID, PodName string, PodNameSpace string, volumes map[string]string) (string, error) {
 	repotag := ct.Image
 	cmd := ct.Command
@@ -317,26 +380,28 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 		}
 	}
 
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	config := &container.Config{
 		Image:  repotag,
 		Cmd:    cmd,
 		Tty:    true,
 		Labels: label,
-		//ExposedPorts: exposedPortSet,
-	}, &container.HostConfig{
+	}
+
+	hostConfig := &container.HostConfig{
 		NetworkMode: container.NetworkMode(pauseRef),
-		// Binds:        option.Binds,
-		// PortBindings: option.PortBindings,
-		//IpcMode: container.IpcMode(pauseRef),
-		PidMode: container.PidMode(pauseRef),
-		Mounts:  mounts,
-		// VolumesFrom:  option.VolumesFrom,
-		// Links:        option.Links,
-		// Resources: container.Resources{
-		// 	Memory:   option.MemoryLimit,
-		// 	NanoCPUs: option.CPUResourceLimit,
-		// },
-	}, nil, nil, "")
+		PidMode:     container.PidMode(pauseRef),
+		Mounts:      mounts,
+	}
+
+	if ct.SecurityContext != nil {
+		if ct.SecurityContext.Privileged != nil && *ct.SecurityContext.Privileged {
+			hostConfig.Privileged = *ct.SecurityContext.Privileged
+		} else if ct.SecurityContext.RunAsUser != nil {
+			config.User = strconv.FormatInt(*ct.SecurityContext.RunAsUser, 10)
+		}
+	}
+
+	resp, err := cli.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {
 		panic(err)
 	}
@@ -503,6 +568,14 @@ func (rm *runtimeManager) DeletePod(ID v1.UID) error {
 				return err
 			}
 		}
+		//if _, ok := container.Labels["IsEnvoy"]; ok {
+		//	if container.Labels["EnvoyPodID"] == string(ID) {
+		//		err = rm.deleteContainer(container)
+		//		if err != nil {
+		//			return err
+		//		}
+		//	}
+		//}
 	}
 	return nil
 }
@@ -593,4 +666,83 @@ func (rm *runtimeManager) createVolumeDir(pod *v1.Pod) (map[string]string, error
 		}
 	}
 	return ret, nil
+}
+
+func (rm *runtimeManager) injectSideCar(pauseID string, tag string, pod *v1.Pod) error {
+	if tag == "" {
+		tag = "latest"
+	}
+	envoyInitImage := "sjtuzc/envoy-init:" + tag
+	envoyImage := "sjtuzc/envoy:" + tag
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	defer cli.Close()
+
+	exist, err := rm.checkImages(envoyInitImage)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		_, err = cli.ImagePull(context.Background(), envoyInitImage, image.PullOptions{})
+		if err != nil {
+			return err
+		}
+	}
+	exist, err = rm.checkImages(envoyImage)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		_, err = cli.ImagePull(context.Background(), envoyImage, image.PullOptions{})
+		if err != nil {
+			return err
+		}
+	}
+
+	// docker run --rm --net container:pauseID --privileged envoy-init
+	resp, err := cli.ContainerCreate(context.Background(), &container.Config{
+		Image: envoyInitImage,
+		Tty:   true,
+	}, &container.HostConfig{
+		NetworkMode: container.NetworkMode("container:" + pauseID),
+		Privileged:  true,
+	}, nil, nil, "")
+	if err != nil {
+		return err
+	}
+	if err = cli.ContainerStart(context.Background(), resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+	// wait for envoy-init to finish
+	statusCh, errCh := cli.ContainerWait(context.Background(), resp.ID, container.WaitConditionNotRunning)
+	select {
+	case err = <-errCh:
+		if err != nil {
+			return err
+		}
+	case status := <-statusCh:
+		if status.StatusCode != 0 {
+			return fmt.Errorf("envoy-init exited with status %d", status.StatusCode)
+		}
+	}
+
+	// docker run --net container:pauseID -u 1337 envoy
+	labels := make(map[string]string)
+	labels["IsEnvoy"] = "true"
+	labels["EnvoyPodID"] = string(pod.UID)
+	resp, err = cli.ContainerCreate(context.Background(), &container.Config{
+		Image:  envoyImage,
+		Tty:    true,
+		User:   envoy.UID,
+		Labels: labels,
+	}, &container.HostConfig{
+		NetworkMode: container.NetworkMode("container:" + pauseID),
+	}, nil, nil, "")
+	if err != nil {
+		return err
+	}
+
+	if err = cli.ContainerStart(context.Background(), resp.ID, container.StartOptions{}); err != nil {
+		return err
+	}
+	return nil
 }
