@@ -47,12 +47,22 @@ func (e *Envoy) inboundProxy(c *gin.Context) {
 	if err != nil {
 		if net.ParseIP(host) != nil {
 			// host仅有ip，使用默认端口
+			ip = host
 			port = "80"
 		} else {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Domain name not supported"})
 			return
 		}
 	}
+
+	// 查找端口映射
+	key := fmt.Sprintf("%s:%s", ip, port)
+	if endpoints, ok := e.mapping[key]; ok {
+		if len(endpoints) != 0 && len(endpoints[0].Endpoints) != 0 {
+			port = fmt.Sprintf("%v", endpoints[0].Endpoints[0].TargetPort)
+		}
+	}
+
 	ip = "127.0.0.1"
 	target := c.Request.URL
 	if target.Scheme == "" {
