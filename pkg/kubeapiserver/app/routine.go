@@ -2506,14 +2506,17 @@ func (s *kubeApiServer) AddSubsetHandler(c *gin.Context) {
 		return
 	}
 	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/subsets/%s", namespace, subset.Name)
-	// uncomment to disable update
-	//uid, err := s.store_cli.Get(namespaceKey)
-	//if err == nil && uid != "" {
-	//	c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Subset]{
-	//		Error: fmt.Sprintf("subset %s/%s already exists", namespace, subset.Name),
-	//	})
-	//	return
-	//}
+	isUpdate := false
+	var oldUID v1.UID
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err == nil && uid != "" {
+		//c.JSON(http.StatusConflict, v1.BaseResponse[*v1.Subset]{
+		//	Error: fmt.Sprintf("subset %s/%s already exists", namespace, subset.Name),
+		//})
+		//return
+		isUpdate = true
+		oldUID = v1.UID(uid)
+	}
 
 	for _, podName := range subset.Spec.Pods {
 		podUID, err := s.store_cli.Get(fmt.Sprintf("/registry/namespaces/%s/pods/%s", namespace, podName))
@@ -2527,7 +2530,13 @@ func (s *kubeApiServer) AddSubsetHandler(c *gin.Context) {
 
 	subset.Namespace = namespace
 	subset.CreationTimestamp = timestamp.NewTimestamp()
-	subset.UID = v1.UID(uuid.NewUUID())
+
+	if isUpdate {
+		subset.UID = oldUID
+	} else {
+		subset.UID = v1.UID(uuid.NewUUID())
+	}
+
 	allKey := fmt.Sprintf("/registry/subsets/%s", subset.UID)
 	subsetJson, _ := json.Marshal(subset)
 	err = s.store_cli.Set(namespaceKey, string(subset.UID))

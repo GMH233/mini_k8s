@@ -7,6 +7,7 @@ import (
 	"minikubernetes/pkg/utils"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Pilot interface {
@@ -38,6 +39,7 @@ func (p *pilot) SyncLoop() error {
 		if err != nil {
 			fmt.Println(err)
 		}
+		time.Sleep(5 * time.Second)
 	}
 
 }
