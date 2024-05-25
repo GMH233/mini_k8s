@@ -28,6 +28,10 @@ type Client interface {
 	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
 
 	GetSidecarMapping() (v1.SidecarMapping, error)
+	GetAllVirtualServices() ([]*v1.VirtualService, error)
+	GetSubsetByName(name, namespace string) (*v1.Subset, error)
+
+	AddSidecarMapping(maps v1.SidecarMapping) error
 }
 
 type client struct {
@@ -363,4 +367,68 @@ func (c *client) GetSidecarMapping() (v1.SidecarMapping, error) {
 		return v1.SidecarMapping{}, fmt.Errorf("get sidecar mapping failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
+}
+
+func (c *client) GetAllVirtualServices() ([]*v1.VirtualService, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/virtualservices", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.VirtualService]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get virtual services failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetSubsetByName(name, namespace string) (*v1.Subset, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/subsets/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.Subset]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get virtual services failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) AddSidecarMapping(maps v1.SidecarMapping) error {
+	jsonBytes, err := json.Marshal(&maps)
+	if err != nil {
+		return err
+	}
+	// POST to API server
+	url := fmt.Sprintf("http://%s:8001/api/v1/sidecar-mapping", c.apiServerIP)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("error: %v", resp.Status)
+	}
+	return nil
 }
