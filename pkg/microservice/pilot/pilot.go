@@ -7,7 +7,6 @@ import (
 	"minikubernetes/pkg/utils"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Pilot interface {
@@ -35,217 +34,222 @@ func (p *pilot) Start() error {
 
 func (p *pilot) SyncLoop() error {
 	for {
-
-		var sideCarMap v1.SidecarMapping = make(v1.SidecarMapping)
-		pods, err := p.client.GetAllPods()
+		err := p.syncLoopIteration()
 		if err != nil {
-			return err
+			fmt.Println(err)
 		}
-		services, err := p.client.GetAllServices()
-		if err != nil {
-			return err
-		}
-		virtualServices, err := p.client.GetAllVirtualServices()
-		if err != nil {
-			return err
-		}
+	}
 
-		servicesMap := p.makeFullMap(services)
-		endpointMap := p.getEndpoints(pods, services)
-		markedMap := p.makeMarkedMap(services)
+}
 
-		for _, vs := range virtualServices {
-			serviceNamespace := vs.Namespace
-			serviceName := vs.Spec.ServiceRef
-			serviceFullName := serviceNamespace + "_" + serviceName
-			serviceUID := servicesMap[serviceFullName].UID
-			serviceAndEndpointIncludingPodName := endpointMap[serviceUID]
+func (p *pilot) syncLoopIteration() error {
+	var sideCarMap v1.SidecarMapping = make(v1.SidecarMapping)
+	pods, err := p.client.GetAllPods()
+	if err != nil {
+		return err
+	}
+	services, err := p.client.GetAllServices()
+	if err != nil {
+		return err
+	}
+	virtualServices, err := p.client.GetAllVirtualServices()
+	if err != nil {
+		return err
+	}
 
-			markedMap[p.getFullPort(serviceUID, vs.Spec.Port)] = true
-			var sidecarEndpoints []v1.SidecarEndpoints
-			if vs.Spec.Subsets[0].URL != nil {
+	servicesMap := p.makeFullMap(services)
+	endpointMap := p.getEndpoints(pods, services)
+	markedMap := p.makeMarkedMap(services)
 
-				for _, sbs := range vs.Spec.Subsets {
+	for _, vs := range virtualServices {
+		serviceNamespace := vs.Namespace
+		serviceName := vs.Spec.ServiceRef
+		serviceFullName := serviceNamespace + "_" + serviceName
+		serviceUID := servicesMap[serviceFullName].UID
+		serviceAndEndpointIncludingPodName := endpointMap[serviceUID]
 
-					subset, err := p.client.GetSubsetByName(sbs.Name, vs.Namespace)
-					if err != nil {
-						return err
-					}
+		markedMap[p.getFullPort(serviceUID, vs.Spec.Port)] = true
+		var sidecarEndpoints []v1.SidecarEndpoints
+		if vs.Spec.Subsets[0].URL != nil {
 
-					url := sbs.URL
-					for _, podName := range subset.Spec.Pods {
-						var singleEndPoints []v1.SingleEndpoint
-						endpoints := serviceAndEndpointIncludingPodName.EndpointsMapWithPodName[podName]
-						for _, endpoint := range endpoints.Ports {
-							singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
-								IP:         endpoints.IP,
-								TargetPort: endpoint.Port,
-							})
-						}
-						sidecarEndpoints = append(sidecarEndpoints, v1.SidecarEndpoints{
-							URL:       url,
-							Weight:    nil,
-							Endpoints: singleEndPoints,
+			for _, sbs := range vs.Spec.Subsets {
+
+				subset, err := p.client.GetSubsetByName(sbs.Name, vs.Namespace)
+				if err != nil {
+					return err
+				}
+
+				url := sbs.URL
+				for _, podName := range subset.Spec.Pods {
+					var singleEndPoints []v1.SingleEndpoint
+					endpoints := serviceAndEndpointIncludingPodName.EndpointsMapWithPodName[podName]
+					for _, endpoint := range endpoints.Ports {
+						singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
+							IP:         endpoints.IP,
+							TargetPort: endpoint.Port,
 						})
 					}
-
-				}
-
-			} else {
-				var VsToSbsWeight []int32
-				var SbsToPodNum []int32
-				for _, sbs := range vs.Spec.Subsets {
-
-					subset, err := p.client.GetSubsetByName(sbs.Name, vs.Namespace)
-					if err != nil {
-						return err
-					}
-
-					VsToSbsWeight = append(VsToSbsWeight, *sbs.Weight)
-					SbsToPodNum = append(SbsToPodNum, int32(len(subset.Spec.Pods)))
-				}
-
-				RealWeight := p.calculate(VsToSbsWeight, SbsToPodNum)
-
-				for i, sbs := range vs.Spec.Subsets {
-
-					subset, err := p.client.GetSubsetByName(sbs.Name, vs.Namespace)
-					if err != nil {
-						return err
-					}
-
-					for _, podName := range subset.Spec.Pods {
-						endpoints := serviceAndEndpointIncludingPodName.EndpointsMapWithPodName[podName]
-						var singleEndPoints []v1.SingleEndpoint
-						for _, endpoint := range endpoints.Ports {
-							singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
-								IP:         endpoints.IP,
-								TargetPort: endpoint.Port,
-							})
-						}
-						sidecarEndpoints = append(sidecarEndpoints, v1.SidecarEndpoints{
-							URL:       nil,
-							Weight:    &(RealWeight[i]),
-							Endpoints: singleEndPoints,
-						})
-					}
-
-				}
-
-			}
-
-			stringIP := serviceAndEndpointIncludingPodName.Service.Spec.ClusterIP + fmt.Sprintf(":%d", vs.Spec.Port)
-			sideCarMap[stringIP] = sidecarEndpoints
-
-		}
-
-		var waitedServiceUidAndPorts map[v1.UID][]int32 = make(map[v1.UID][]int32)
-		for serviceUIDAndPort, isDone := range markedMap {
-			if !isDone {
-				//println(serviceUIDAndPort)
-				uid, port := p.splitFullPort(serviceUIDAndPort)
-				waitedServiceUidAndPorts[uid] = append(waitedServiceUidAndPorts[uid], port)
-				//println(uid)
-				//println(fmt.Sprintf(":%d", port))
-			}
-		}
-		newMap := make(map[int32]*v1.ServiceAndEndpoints)
-		for uid, portSs := range waitedServiceUidAndPorts {
-			endpointsWithPodName := make(map[string]v1.Endpoint)
-			service := endpointMap[uid].Service
-			for _, port_i := range portSs {
-				var port v1.ServicePort
-				for _, portt := range service.Spec.Ports {
-					if port_i == portt.Port {
-						port = portt
-					}
-				}
-
-				for _, pod := range pods {
-					if !p.isSelectorMatched(pod, service) {
-						continue
-					}
-					if pod.Status.Phase != v1.PodRunning {
-						continue
-					}
-					if pod.Status.PodIP == "" {
-						continue
-					}
-
-					var ports []v1.EndpointPort
-
-				SearchLoop:
-					for _, container := range pod.Spec.Containers {
-						for _, containerPort := range container.Ports {
-							if containerPort.ContainerPort == port.TargetPort && containerPort.Protocol == port.Protocol {
-								ports = append(ports, v1.EndpointPort{
-									Port:     port.TargetPort,
-									Protocol: port.Protocol,
-								})
-								break SearchLoop
-							}
-						}
-					}
-
-					endpointsWithPodName[pod.Name] = v1.Endpoint{
-						IP:    pod.Status.PodIP,
-						Ports: ports,
-					}
-				}
-				newMap[port_i] = &v1.ServiceAndEndpoints{
-					Service:                 service,
-					EndpointsMapWithPodName: endpointsWithPodName,
-				}
-			}
-		}
-
-		defaultWeight := int32(1)
-
-		for port, serviceAndEndpoints := range newMap {
-			stringIP := serviceAndEndpoints.Service.Spec.ClusterIP + fmt.Sprintf(":%d", port)
-			var sidecarEndpoints []v1.SidecarEndpoints
-			for _, endpoint := range serviceAndEndpoints.EndpointsMapWithPodName {
-				var singleEndPoints []v1.SingleEndpoint
-				for _, endPointPort := range endpoint.Ports {
-					singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
-						IP:         endpoint.IP,
-						TargetPort: endPointPort.Port,
+					sidecarEndpoints = append(sidecarEndpoints, v1.SidecarEndpoints{
+						URL:       url,
+						Weight:    nil,
+						Endpoints: singleEndPoints,
 					})
 				}
-				if singleEndPoints == nil {
-					continue
-				}
-				sidecarEndpoints = append(sidecarEndpoints, v1.SidecarEndpoints{
-					Weight:    &defaultWeight,
-					URL:       nil,
-					Endpoints: singleEndPoints,
-				})
+
 			}
-			sideCarMap[stringIP] = sidecarEndpoints
+
+		} else {
+			var VsToSbsWeight []int32
+			var SbsToPodNum []int32
+			for _, sbs := range vs.Spec.Subsets {
+
+				subset, err := p.client.GetSubsetByName(sbs.Name, vs.Namespace)
+				if err != nil {
+					return err
+				}
+
+				VsToSbsWeight = append(VsToSbsWeight, *sbs.Weight)
+				SbsToPodNum = append(SbsToPodNum, int32(len(subset.Spec.Pods)))
+			}
+
+			RealWeight := p.calculate(VsToSbsWeight, SbsToPodNum)
+
+			for i, sbs := range vs.Spec.Subsets {
+
+				subset, err := p.client.GetSubsetByName(sbs.Name, vs.Namespace)
+				if err != nil {
+					return err
+				}
+
+				for _, podName := range subset.Spec.Pods {
+					endpoints := serviceAndEndpointIncludingPodName.EndpointsMapWithPodName[podName]
+					var singleEndPoints []v1.SingleEndpoint
+					for _, endpoint := range endpoints.Ports {
+						singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
+							IP:         endpoints.IP,
+							TargetPort: endpoint.Port,
+						})
+					}
+					sidecarEndpoints = append(sidecarEndpoints, v1.SidecarEndpoints{
+						URL:       nil,
+						Weight:    &(RealWeight[i]),
+						Endpoints: singleEndPoints,
+					})
+				}
+
+			}
 
 		}
-		err = p.client.AddSidecarMapping(sideCarMap)
-		if err != nil {
-			return err
-		}
 
-		//for stringIP, sidecarEndpoints := range sideCarMap {
-		//	fmt.Println("IP IS :" + stringIP)
-		//	for i, sidecarEndpoint := range sidecarEndpoints {
-		//		fmt.Println(i)
-		//		fmt.Println(*sidecarEndpoint.Weight)
-		//		for _, endpoint := range sidecarEndpoint.Endpoints {
-		//			fmt.Println(endpoint.IP + ": " + fmt.Sprintf("%d", endpoint.TargetPort))
-		//		}
-		//	}
-		//	fmt.Println(" ")
-		//}
-		//return nil
-
-		time.Sleep(5000 * time.Millisecond)
+		stringIP := serviceAndEndpointIncludingPodName.Service.Spec.ClusterIP + fmt.Sprintf(":%d", vs.Spec.Port)
+		sideCarMap[stringIP] = sidecarEndpoints
 
 	}
 
+	var waitedServiceUidAndPorts map[v1.UID][]int32 = make(map[v1.UID][]int32)
+	for serviceUIDAndPort, isDone := range markedMap {
+		if !isDone {
+			//println(serviceUIDAndPort)
+			uid, port := p.splitFullPort(serviceUIDAndPort)
+			waitedServiceUidAndPorts[uid] = append(waitedServiceUidAndPorts[uid], port)
+			//println(uid)
+			//println(fmt.Sprintf(":%d", port))
+		}
+	}
+	newMap := make(map[int32]*v1.ServiceAndEndpoints)
+	for uid, portSs := range waitedServiceUidAndPorts {
+		endpointsWithPodName := make(map[string]v1.Endpoint)
+		service := endpointMap[uid].Service
+		for _, port_i := range portSs {
+			var port v1.ServicePort
+			for _, portt := range service.Spec.Ports {
+				if port_i == portt.Port {
+					port = portt
+				}
+			}
+
+			for _, pod := range pods {
+				if !p.isSelectorMatched(pod, service) {
+					continue
+				}
+				if pod.Status.Phase != v1.PodRunning {
+					continue
+				}
+				if pod.Status.PodIP == "" {
+					continue
+				}
+
+				var ports []v1.EndpointPort
+
+			SearchLoop:
+				for _, container := range pod.Spec.Containers {
+					for _, containerPort := range container.Ports {
+						if containerPort.ContainerPort == port.TargetPort && containerPort.Protocol == port.Protocol {
+							ports = append(ports, v1.EndpointPort{
+								Port:     port.TargetPort,
+								Protocol: port.Protocol,
+							})
+							break SearchLoop
+						}
+					}
+				}
+
+				endpointsWithPodName[pod.Name] = v1.Endpoint{
+					IP:    pod.Status.PodIP,
+					Ports: ports,
+				}
+			}
+			newMap[port_i] = &v1.ServiceAndEndpoints{
+				Service:                 service,
+				EndpointsMapWithPodName: endpointsWithPodName,
+			}
+		}
+	}
+
+	defaultWeight := int32(1)
+
+	for port, serviceAndEndpoints := range newMap {
+		stringIP := serviceAndEndpoints.Service.Spec.ClusterIP + fmt.Sprintf(":%d", port)
+		var sidecarEndpoints []v1.SidecarEndpoints
+		for _, endpoint := range serviceAndEndpoints.EndpointsMapWithPodName {
+			var singleEndPoints []v1.SingleEndpoint
+			for _, endPointPort := range endpoint.Ports {
+				singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
+					IP:         endpoint.IP,
+					TargetPort: endPointPort.Port,
+				})
+			}
+			if singleEndPoints == nil {
+				continue
+			}
+			sidecarEndpoints = append(sidecarEndpoints, v1.SidecarEndpoints{
+				Weight:    &defaultWeight,
+				URL:       nil,
+				Endpoints: singleEndPoints,
+			})
+		}
+		sideCarMap[stringIP] = sidecarEndpoints
+
+	}
+	err = p.client.AddSidecarMapping(sideCarMap)
+	if err != nil {
+		return err
+	}
+
+	//for stringIP, sidecarEndpoints := range sideCarMap {
+	//	fmt.Println("IP IS :" + stringIP)
+	//	for i, sidecarEndpoint := range sidecarEndpoints {
+	//		fmt.Println(i)
+	//		fmt.Println(*sidecarEndpoint.Weight)
+	//		for _, endpoint := range sidecarEndpoint.Endpoints {
+	//			fmt.Println(endpoint.IP + ": " + fmt.Sprintf("%d", endpoint.TargetPort))
+	//		}
+	//	}
+	//	fmt.Println(" ")
+	//}
+	//return nil
+
+	return nil
 }
 
 func (p *pilot) getEndpoints(pods []*v1.Pod, services []*v1.Service) map[v1.UID]*v1.ServiceAndEndpoints {
