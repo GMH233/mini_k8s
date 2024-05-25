@@ -427,7 +427,7 @@ func (c *client) AddSidecarMapping(maps v1.SidecarMapping) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("error: %v", resp.Status)
 	}
 	return nil
