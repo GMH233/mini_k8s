@@ -90,7 +90,8 @@ const (
 	NamespaceSubsetsURL = "/api/v1/namespaces/:namespace/subsets"
 	SingleSubsetURL     = "/api/v1/namespaces/:namespace/subsets/:subsetname"
 
-	SidecarMappingURL = "/api/v1/sidecar-mapping"
+	SidecarMappingURL            = "/api/v1/sidecar-mapping"
+	SidecarServiceNameMappingURL = "/api/v1/sidecar-service-name-mapping"
 )
 
 /* NAMESPACE
@@ -237,6 +238,7 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(SidecarMappingURL, ser.GetSidecarMapping)
 	ser.router.POST(SidecarMappingURL, ser.SaveSidecarMapping)
+	ser.router.GET(SidecarServiceNameMappingURL, ser.GetSidecarServiceNameMapping)
 }
 
 func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
@@ -2703,5 +2705,22 @@ func (s *kubeApiServer) GetSidecarMapping(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.SidecarMapping]{
 		Data: &mapping,
+	})
+}
+
+func (s *kubeApiServer) GetSidecarServiceNameMapping(c *gin.Context) {
+	services, err := s.getAllServicesFromEtcd()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[v1.SidecarServiceNameMapping]{
+			Error: err.Error(),
+		})
+		return
+	}
+	mapping := make(v1.SidecarServiceNameMapping)
+	for _, svc := range services {
+		mapping[svc.Name] = svc.Spec.ClusterIP
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[v1.SidecarServiceNameMapping]{
+		Data: mapping,
 	})
 }

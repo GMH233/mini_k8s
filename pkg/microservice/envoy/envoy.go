@@ -29,6 +29,7 @@ type Envoy struct {
 	outboundRouter *gin.Engine
 	mapping        v1.SidecarMapping
 	kubeClient     kubeclient.Client
+	nameMapping    v1.SidecarServiceNameMapping
 }
 
 func NewEnvoy(apiServerIP string) (*Envoy, error) {
@@ -36,6 +37,7 @@ func NewEnvoy(apiServerIP string) (*Envoy, error) {
 	envoy.inboundRouter = gin.Default()
 	envoy.outboundRouter = gin.Default()
 	envoy.mapping = make(v1.SidecarMapping)
+	envoy.nameMapping = make(v1.SidecarServiceNameMapping)
 	envoy.kubeClient = kubeclient.NewClient(apiServerIP)
 	return envoy, nil
 }
@@ -50,7 +52,7 @@ func (e *Envoy) inboundProxy(c *gin.Context) {
 			ip = host
 			port = "80"
 		} else {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Domain name not supported"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Domain name not supported in inbound proxy"})
 			return
 		}
 	}
@@ -90,13 +92,29 @@ func (e *Envoy) outboundProxy(c *gin.Context) {
 			// host仅有ip，使用默认端口
 			ip = host
 			port = "80"
-		} else {
+		} else if svcIP, ok := e.nameMapping[ip]; !ok {
 			// host为域名
 			useOriginal = true
+		} else {
+			// host为服务名
+			ip = svcIP
+			port = "80"
+		}
+	} else {
+		if net.ParseIP(ip) != nil {
+			// do nothing
+		} else if svcIP, ok := e.nameMapping[ip]; !ok {
+			// host为域名
+			useOriginal = true
+		} else {
+			// host为服务名
+			ip = svcIP
 		}
 	}
-	if _, ok := e.mapping[fmt.Sprintf("%s:%s", ip, port)]; !ok {
-		useOriginal = true
+	if !useOriginal {
+		if _, ok := e.mapping[fmt.Sprintf("%s:%s", ip, port)]; !ok {
+			useOriginal = true
+		}
 	}
 	var target *url.URL
 	if useOriginal {
@@ -293,10 +311,17 @@ func (e *Envoy) watchMapping() {
 		mapping, err := e.kubeClient.GetSidecarMapping()
 		if err != nil {
 			log.Printf("Get sidecar mapping failed: %v\n", err)
+		} else {
+			e.mapping = mapping
+		}
+		nameMapping, err := e.kubeClient.GetSidecarServiceNameMapping()
+		if err != nil {
+			log.Printf("Get sidecar service name mapping failed: %v\n", err)
+		} else {
+			e.nameMapping = nameMapping
 		}
 		// mock
 		//mapping := getMockMapping()
-		e.mapping = mapping
 		time.Sleep(3560 * time.Millisecond)
 	}
 }

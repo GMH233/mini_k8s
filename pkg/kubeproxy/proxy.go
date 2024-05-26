@@ -278,6 +278,70 @@ func (p *Proxy) deleteCorednsHosts(dns *v1.DNS) error {
 	return err
 }
 
+func (p *Proxy) addServiceNameDNS(service *v1.Service) error {
+	filename := "/etc/coredns/hosts"
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(file)
+	// 检查重复
+	hosts := make(map[string]struct{})
+	content := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return fmt.Errorf("invalid coredns hosts file: %s", line)
+		}
+		host := fields[1]
+		hosts[host] = struct{}{}
+		content += line + "\n"
+	}
+	err = file.Close()
+	if err != nil {
+		return err
+	}
+	if _, ok := hosts[service.Name]; ok {
+		return fmt.Errorf("service name %s already exists in coredns hosts", service.Name)
+	} else if service.Spec.ClusterIP == "" {
+		return fmt.Errorf("service %s has no cluster ip", service.Name)
+	} else {
+		content += fmt.Sprintf("%s %s\n", service.Spec.ClusterIP, service.Name)
+	}
+	err = os.WriteFile(filename, []byte(content), 0644)
+	return err
+}
+
+func (p *Proxy) deleteServiceNameDNS(service *v1.Service) error {
+	filename := "/etc/coredns/hosts"
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(file)
+	content := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return fmt.Errorf("invalid coredns hosts file: %s", line)
+		}
+		host := fields[1]
+		if host != service.Name {
+			content += line + "\n"
+		} else if fields[0] != service.Spec.ClusterIP {
+			return fmt.Errorf("cluster ip mismatch for service %s", service.Name)
+		}
+	}
+	err = file.Close()
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile(filename, []byte(content), 0644)
+	return err
+}
+
 func (p *Proxy) deleteNginxConfig(dns *v1.DNS) error {
 	filenameFmt := "/etc/nginx/conf.d/%v.conf"
 	for _, rule := range dns.Spec.Rules {
@@ -333,6 +397,10 @@ func (p *Proxy) HandleServiceAdditions(updates []*types.ServiceUpdateSingle) {
 			}
 		}
 		p.serviceCache[utils.GetObjectFullName(&svc.ObjectMeta)] = vip
+		err := p.addServiceNameDNS(svc)
+		if err != nil {
+			log.Printf("Failed to add service name dns: %v", err)
+		}
 		log.Printf("Service %s added.", svc.Name)
 	}
 }
