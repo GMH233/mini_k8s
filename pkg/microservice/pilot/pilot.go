@@ -158,7 +158,7 @@ func (p *pilot) syncLoopIteration() error {
 			//println(fmt.Sprintf(":%d", port))
 		}
 	}
-	newMap := make(map[int32]*v1.ServiceAndEndpoints)
+	newMap := make(map[string]*v1.ServiceAndEndpoints)
 	for uid, portSs := range waitedServiceUidAndPorts {
 		endpointsWithPodName := make(map[string]v1.Endpoint)
 		service := endpointMap[uid].Service
@@ -201,7 +201,7 @@ func (p *pilot) syncLoopIteration() error {
 					Ports: ports,
 				}
 			}
-			newMap[port_i] = &v1.ServiceAndEndpoints{
+			newMap[p.getFullPort(service.UID, port_i)] = &v1.ServiceAndEndpoints{
 				Service:                 service,
 				EndpointsMapWithPodName: endpointsWithPodName,
 			}
@@ -211,7 +211,8 @@ func (p *pilot) syncLoopIteration() error {
 	defaultWeight := int32(1)
 
 	for port, serviceAndEndpoints := range newMap {
-		stringIP := serviceAndEndpoints.Service.Spec.ClusterIP + fmt.Sprintf(":%d", port)
+		_, port_i := p.splitFullPort(port)
+		stringIP := serviceAndEndpoints.Service.Spec.ClusterIP + fmt.Sprintf(":%d", port_i)
 		var sidecarEndpoints []v1.SidecarEndpoints
 		for _, endpoint := range serviceAndEndpoints.EndpointsMapWithPodName {
 			var singleEndPoints []v1.SingleEndpoint

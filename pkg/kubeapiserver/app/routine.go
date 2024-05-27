@@ -90,7 +90,8 @@ const (
 	NamespaceSubsetsURL = "/api/v1/namespaces/:namespace/subsets"
 	SingleSubsetURL     = "/api/v1/namespaces/:namespace/subsets/:subsetname"
 
-	SidecarMappingURL = "/api/v1/sidecar-mapping"
+	SidecarMappingURL            = "/api/v1/sidecar-mapping"
+	SidecarServiceNameMappingURL = "/api/v1/sidecar-service-name-mapping"
 )
 
 /* NAMESPACE
@@ -237,6 +238,7 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(SidecarMappingURL, ser.GetSidecarMapping)
 	ser.router.POST(SidecarMappingURL, ser.SaveSidecarMapping)
+	ser.router.GET(SidecarServiceNameMappingURL, ser.GetSidecarServiceNameMapping)
 }
 
 func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
@@ -673,6 +675,30 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 
 	pod.Status.Phase = v1.PodPending
 
+	namespace := con.Param("namespace")
+	if namespace == "" {
+		con.JSON(http.StatusBadRequest, gin.H{
+			"error": "namespace is required",
+		})
+		return
+	}
+	if pod.Namespace == "" {
+		if namespace != Default_Namespace {
+			con.JSON(http.StatusBadRequest, gin.H{
+				"error": "namespace does not match",
+			})
+			return
+		}
+	} else {
+		if pod.Namespace != namespace {
+			con.JSON(http.StatusBadRequest, gin.H{
+				"error": "namespace does not match",
+			})
+			return
+		}
+	}
+	pod.Namespace = namespace
+
 	/* fake store pod to:
 	1. namespace , store the binding of podname and uid
 	2. node , only uid
@@ -687,7 +713,7 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	all_pod_keystr := prefix + "/pods/" + string(pod.ObjectMeta.UID)
 
 	// namespace里面对应的是podname和uid的映射
-	namespace_pod_keystr := prefix + "/namespaces/" + Default_Namespace + "/pods/" + pod_name
+	namespace_pod_keystr := prefix + "/namespaces/" + namespace + "/pods/" + pod_name
 
 	// node里面对应的也是podname和uid的映射
 	// node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name
@@ -2703,5 +2729,22 @@ func (s *kubeApiServer) GetSidecarMapping(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.SidecarMapping]{
 		Data: &mapping,
+	})
+}
+
+func (s *kubeApiServer) GetSidecarServiceNameMapping(c *gin.Context) {
+	services, err := s.getAllServicesFromEtcd()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[v1.SidecarServiceNameMapping]{
+			Error: err.Error(),
+		})
+		return
+	}
+	mapping := make(v1.SidecarServiceNameMapping)
+	for _, svc := range services {
+		mapping[svc.Name] = svc.Spec.ClusterIP
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[v1.SidecarServiceNameMapping]{
+		Data: mapping,
 	})
 }

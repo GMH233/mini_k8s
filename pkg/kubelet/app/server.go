@@ -75,6 +75,7 @@ func (kls *KubeletServer) RunKubelet(ctx context.Context, wg *sync.WaitGroup) {
 func (kls *KubeletServer) createAndInitKubelet() (*kubelet.Kubelet, error) {
 	kl, err := kubelet.NewMainKubelet(kls.nodeName, kls.kubeClient)
 	if err != nil {
+		log.Printf("Failed to create kubelet: %v", err)
 		return nil, err
 	}
 	return kl, nil

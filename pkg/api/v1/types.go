@@ -442,6 +442,9 @@ type NodeStatus struct {
 	Address string `json:"address,omitempty"`
 }
 
+// ServiceName -> ClusterIP
+type SidecarServiceNameMapping map[string]string
+
 type SidecarMapping map[string][]SidecarEndpoints
 
 type SidecarEndpoints struct {

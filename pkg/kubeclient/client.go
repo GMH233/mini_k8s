@@ -32,6 +32,8 @@ type Client interface {
 	GetSubsetByName(name, namespace string) (*v1.Subset, error)
 
 	AddSidecarMapping(maps v1.SidecarMapping) error
+
+	GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error)
 }
 
 type client struct {
@@ -300,7 +302,7 @@ func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
 
 	metricsStr, _ := json.Marshal(metrics)
 
-	fmt.Printf("upload metrics str: %s\n", string(metricsStr))
+	// fmt.Printf("upload metrics str: %s\n", string(metricsStr))
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsStr))
 	if err != nil {
@@ -431,4 +433,25 @@ func (c *client) AddSidecarMapping(maps v1.SidecarMapping) error {
 		return fmt.Errorf("error: %v", resp.Status)
 	}
 	return nil
+}
+
+func (c *client) GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/sidecar-service-name-mapping", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[v1.SidecarServiceNameMapping]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get sidecar service name mapping failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
 }
