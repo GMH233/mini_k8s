@@ -302,7 +302,7 @@ func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
 
 	metricsStr, _ := json.Marshal(metrics)
 
-	fmt.Printf("upload metrics str: %s\n", string(metricsStr))
+	// fmt.Printf("upload metrics str: %s\n", string(metricsStr))
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsStr))
 	if err != nil {
