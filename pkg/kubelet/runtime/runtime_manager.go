@@ -287,10 +287,13 @@ func (rm *runtimeManager) createInitContainer(c *v1.Container, pauseID string) e
 		return err
 	}
 	if !exist {
-		_, err = cli.ImagePull(context.Background(), c.Image, image.PullOptions{})
+		readCloser, err := cli.ImagePull(context.Background(), c.Image, image.PullOptions{})
 		if err != nil {
 			return err
 		}
+		// 读取pull的输出
+		_, _ = io.ReadAll(readCloser)
+		_ = readCloser.Close()
 	}
 	hostConfig := &container.HostConfig{
 		NetworkMode: container.NetworkMode("container:" + pauseID),
