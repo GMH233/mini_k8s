@@ -186,6 +186,7 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 		log.Printf("Creating pod %v using container manager.\n", pod.Name)
 		err := kl.runtimeManager.AddPod(pod)
 		if err != nil {
+			log.Printf("Failed to create pod %v: %v\n", pod.Name, err)
 			return
 		}
 		log.Printf("Pod %v created.\n", pod.Name)

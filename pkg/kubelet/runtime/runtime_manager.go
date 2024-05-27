@@ -43,7 +43,8 @@ func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
 	defer rm.lock.Unlock()
 	containers, err := rm.getAllContainers()
 	if err != nil {
-		panic(err)
+		// panic(err)
+		return nil, err
 	}
 	var ret []*Pod
 
@@ -87,7 +88,8 @@ func (rm *runtimeManager) GetPodStatus(ID v1.UID, PodName string, PodSpace strin
 	defer rm.lock.Unlock()
 	containers, err := rm.getPodContainers(PodName)
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return nil, err
 	}
 	podStatus := &PodStatus{
 		ID:                ID,
@@ -107,7 +109,8 @@ func (rm *runtimeManager) GetPodStatus(ID v1.UID, PodName string, PodSpace strin
 func (rm *runtimeManager) getPodContainers(PodName string) ([]*ContainerStatus, error) {
 	containers, err := rm.getAllContainers()
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return nil, err
 	}
 	var ret []*ContainerStatus
 	for _, container := range containers {
@@ -138,7 +141,8 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 	//PauseId, err := rm.CreatePauseContainer(pod.UID, pod.Name, pod.Namespace)
 	PauseId, err := rm.CreatePauseContainer(pod)
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return err
 	}
 
 	for _, c := range pod.Spec.InitContainers {
@@ -156,7 +160,8 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 		}
 		_, err = rm.createContainer(&container, PauseId, pod.UID, pod.Name, pod.Namespace, volumes)
 		if err != nil {
-			panic(err)
+			//panic(err)
+			return err
 		}
 	}
 
@@ -171,19 +176,22 @@ func (rm *runtimeManager) CreatePauseContainer(pod *v1.Pod) (string, error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 	defer cli.Close()
 	PauseContainerImage := "registry.aliyuncs.com/google_containers/pause:3.6"
 	exi, err := rm.checkImages(PauseContainerImage)
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 	if !exi {
 		//fmt.Println("yes")
 		reader, err := cli.ImagePull(ctx, PauseContainerImage, image.PullOptions{})
 		if err != nil {
-			panic(err)
+			//panic(err)
+			return "", err
 		}
 		defer reader.Close()
 		io.Copy(os.Stdout, reader)
@@ -206,16 +214,19 @@ func (rm *runtimeManager) CreatePauseContainer(pod *v1.Pod) (string, error) {
 		DNS:          []string{rm.nameserverIP},
 	}, nil, nil, "")
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 
 	ip, err := nw.Attach(resp.ID)
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 	rm.IpMap[PodID] = ip
 
@@ -325,19 +336,22 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 	defer cli.Close()
 
 	exi, err := rm.checkImages(repotag)
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 	if !exi {
 		//fmt.Println("yes")
 		reader, err := cli.ImagePull(ctx, repotag, image.PullOptions{})
 		if err != nil {
-			panic(err)
+			//panic(err)
+			return "", err
 		}
 		defer reader.Close()
 		io.Copy(os.Stdout, reader)
@@ -403,11 +417,13 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 
 	resp, err := cli.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 
 	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 
 	// statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
@@ -421,7 +437,8 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 
 	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return "", err
 	}
 
 	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
@@ -432,13 +449,15 @@ func (rm *runtimeManager) checkImages(repotag string) (bool, error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return false, err
 	}
 	defer cli.Close()
 	images, err := cli.ImageList(ctx, image.ListOptions{})
 	if err != nil {
 		//fmt.Println("fail to get images", err)
-		panic(err)
+		//panic(err)
+		return false, err
 	}
 	//fmt.Println("Docker Images:")
 	for _, image := range images {
@@ -477,13 +496,15 @@ func (rm *runtimeManager) getAllContainers() ([]types.Container, error) {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return nil, err
 	}
 	defer cli.Close()
 
 	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return nil, err
 	}
 	var ret []types.Container
 	for _, container := range containers {
@@ -610,17 +631,20 @@ func (rm *runtimeManager) deleteContainer(ct types.Container) error {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		//panic(err)
+		return err
 	}
 	defer cli.Close()
 	noWaitTimeout := 0
 	if ct.State == "running" {
 		if err := cli.ContainerStop(ctx, ct.ID, container.StopOptions{Timeout: &noWaitTimeout}); err != nil {
-			panic(err)
+			//panic(err)
+			return err
 		}
 	}
 	if err := cli.ContainerRemove(ctx, ct.ID, container.RemoveOptions{}); err != nil {
-		panic(err)
+		//panic(err)
+		return err
 	}
 
 	return nil
