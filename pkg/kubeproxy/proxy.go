@@ -425,6 +425,10 @@ func (p *Proxy) HandleServiceDeletions(updates []*types.ServiceUpdateSingle) {
 			}
 		}
 		delete(p.serviceCache, utils.GetObjectFullName(&svc.ObjectMeta))
+		err := p.deleteServiceNameDNS(svc)
+		if err != nil {
+			log.Printf("Failed to delete service name dns: %v", err)
+		}
 		log.Printf("Service %s deleted.", svc.Name)
 	}
 }

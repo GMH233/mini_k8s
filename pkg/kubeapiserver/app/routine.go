@@ -675,6 +675,30 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 
 	pod.Status.Phase = v1.PodPending
 
+	namespace := con.Param("namespace")
+	if namespace == "" {
+		con.JSON(http.StatusBadRequest, gin.H{
+			"error": "namespace is required",
+		})
+		return
+	}
+	if pod.Namespace == "" {
+		if namespace != Default_Namespace {
+			con.JSON(http.StatusBadRequest, gin.H{
+				"error": "namespace does not match",
+			})
+			return
+		}
+	} else {
+		if pod.Namespace != namespace {
+			con.JSON(http.StatusBadRequest, gin.H{
+				"error": "namespace does not match",
+			})
+			return
+		}
+	}
+	pod.Namespace = namespace
+
 	/* fake store pod to:
 	1. namespace , store the binding of podname and uid
 	2. node , only uid
@@ -689,7 +713,7 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	all_pod_keystr := prefix + "/pods/" + string(pod.ObjectMeta.UID)
 
 	// namespace里面对应的是podname和uid的映射
-	namespace_pod_keystr := prefix + "/namespaces/" + Default_Namespace + "/pods/" + pod_name
+	namespace_pod_keystr := prefix + "/namespaces/" + namespace + "/pods/" + pod_name
 
 	// node里面对应的也是podname和uid的映射
 	// node_pod_keystr := prefix + "/nodes/" + Default_Nodename + "/pods/" + pod_name

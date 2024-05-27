@@ -335,7 +335,7 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 	}
 	if !exi {
 		//fmt.Println("yes")
-		reader, err := cli.ImagePull(ctx, "docker.io/library/"+repotag, image.PullOptions{})
+		reader, err := cli.ImagePull(ctx, repotag, image.PullOptions{})
 		if err != nil {
 			panic(err)
 		}
