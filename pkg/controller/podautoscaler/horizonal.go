@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var hpadbg bool = false
+
 type HorizonalController interface {
 	Run() error
 }
@@ -70,7 +72,9 @@ func (hc *horizonalController) Run() error {
 
 				// 1. 获取所有的HorizontalPodAutoscaler
 				allHPAScalers, err := hc.kube_cli.GetAllHPAScalers()
-				log.Printf("[HPA] Get all HorizontalPodAutoscaler: %v", allHPAScalers)
+				if hpadbg {
+					log.Printf("[HPA] Get all HorizontalPodAutoscaler: %v", allHPAScalers)
+				}
 				if err != nil {
 					log.Printf("[HPA] Get all HorizontalPodAutoscaler failed, error: %v", err)
 					// return err
@@ -82,14 +86,18 @@ func (hc *horizonalController) Run() error {
 
 				// 2. 获取所有的Pod
 				allPods, err := hc.kube_cli.GetAllPods()
-				log.Printf("[HPA] Get all Pods: %v", allPods)
+				if hpadbg {
+					log.Printf("[HPA] Get all Pods: %v", allPods)
+				}
 				if err != nil {
 					log.Printf("[HPA] Get all Pods failed, error: %v", err)
 					// return err
 				}
 
 				for _, hpa := range allHPAScalers {
-					log.Printf("[HPA] Conducting HPA: %v\n", hpa)
+					if hpadbg {
+						log.Printf("[HPA] Conducting HPA: %v\n", hpa)
+					}
 					reps, err := hc.kube_cli.GetAllReplicaSets()
 					if err != nil {
 						log.Printf("[HPA] Get all ReplicaSets failed, error: %v\n", err)
@@ -105,7 +113,9 @@ func (hc *horizonalController) Run() error {
 						log.Printf("[HPA] ReplicaSet not found\n")
 						continue
 					}
-					log.Printf("[HPA] ReplicaSet Matched:   %v\n", rep)
+					if hpadbg {
+						log.Printf("[HPA] ReplicaSet Matched:   %v\n", rep)
+					}
 					// 根据ReplicaSet的labels筛选所有的Pod
 					podsMatch, err := oneMatchRpsLabels(rep, allPods)
 					if err != nil {
@@ -116,9 +126,9 @@ func (hc *horizonalController) Run() error {
 						log.Printf("[HPA] No matched pods!\n")
 						continue
 					}
-
-					log.Printf("[HPA] Pods Matched: %v\n", podsMatch)
-
+					if hpadbg {
+						log.Printf("[HPA] Pods Matched: %v\n", podsMatch)
+					}
 					// replicaSet目前的副本数
 					var curRpsNum int32 = rep.Spec.Replicas
 
@@ -201,7 +211,9 @@ func (hc *horizonalController) changeRpsPodNum(name string, namespace string, re
 // TODOS 由ratio计算副本数的函数抽象成一个
 func genRepNumFromCPU(hpa *v1.HorizontalPodAutoscaler, metricTypePos int, podsMatch []*v1.Pod, curRpsNum int32, kube_cli kubeclient.Client) int32 {
 
-	log.Printf("[HPA] genRepNumFromCPU\n")
+	if hpadbg {
+		log.Printf("[HPA] genRepNumFromCPU\n")
+	}
 	//需要取得hpa中相关的策略字段，以获取相关的统计窗口大小
 	upBehavior := hpa.Spec.Behavior.ScaleUp
 	downBehavior := hpa.Spec.Behavior.ScaleDown
@@ -218,9 +230,9 @@ func genRepNumFromCPU(hpa *v1.HorizontalPodAutoscaler, metricTypePos int, podsMa
 
 	upPeriod := upBehavior.PeriodSeconds
 	downPeriod := downBehavior.PeriodSeconds
-
-	log.Printf("[HPA] UpPeriod: %v, DownPeriod: %v\n", upPeriod, downPeriod)
-
+	if hpadbg {
+		log.Printf("[HPA] UpPeriod: %v, DownPeriod: %v\n", upPeriod, downPeriod)
+	}
 	// spec中metrics的模板，包含资源类型，目标值等
 	metricsTplt := hpa.Spec.Metrics[metricTypePos]
 	if metricsTplt.Target.Type != v1.UtilizationMetricType {
@@ -238,8 +250,9 @@ func genRepNumFromCPU(hpa *v1.HorizontalPodAutoscaler, metricTypePos int, podsMa
 	if ratio > 1.1 {
 		var newRepNum int32 = 0
 		// 可以扩容
-		log.Printf("[HPA] UpScale: %v\n", hpa)
-
+		if hpadbg {
+			log.Printf("[HPA] UpScale: %v\n", hpa)
+		}
 		tryAdd := (int32)(math.Ceil((float64)((ratio - 1) * float32(curRpsNum))))
 		if hpa.Spec.Behavior.ScaleUp.Type == v1.PercentScalingPolicy {
 			tryAddByPercent := (int32)(math.Ceil((float64)(hpa.Spec.Behavior.ScaleUp.Value * curRpsNum / 100)))
@@ -266,8 +279,9 @@ func genRepNumFromCPU(hpa *v1.HorizontalPodAutoscaler, metricTypePos int, podsMa
 	if ratio < 0.9 {
 		var newRepNum int32 = 0
 		// 可以缩容
-		log.Printf("[HPA] DownScale: %v\n", hpa)
-
+		if hpadbg {
+			log.Printf("[HPA] DownScale: %v\n", hpa)
+		}
 		trySub := (int32)(math.Ceil((float64)((1 - ratio) * float32(curRpsNum))))
 		if hpa.Spec.Behavior.ScaleDown.Type == v1.PercentScalingPolicy {
 			trySubByPercent := (int32)(math.Ceil((float64)(hpa.Spec.Behavior.ScaleDown.Value * curRpsNum / 100)))
@@ -334,7 +348,9 @@ func genAvgCpuUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.Cli
 			}
 			if len(oneCtnr) != 0 {
 				avg = sum / float32(len(oneCtnr))
-				log.Printf("[HPA] Pod Metrics avg cpu / one container: %v\n", avg)
+				if hpadbg {
+					log.Printf("[HPA] Pod Metrics avg cpu / one container: %v\n", avg)
+				}
 			}
 			podCpuSum += avg
 		}
@@ -342,7 +358,9 @@ func genAvgCpuUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.Cli
 
 		// 计算Pod的平均cpu使用率
 		// 默认是所有container的平均值
-		log.Printf("[HPA] Pod Metrics avg cpu / all containers in one pod: %v\n", podCpuAvg)
+		if hpadbg {
+			log.Printf("[HPA] Pod Metrics avg cpu / all containers in one pod: %v\n", podCpuAvg)
+		}
 		allPodCpuAvg += podCpuAvg
 	}
 
@@ -353,7 +371,10 @@ func genAvgCpuUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.Cli
 }
 
 func genRepNumFromMemory(hpa *v1.HorizontalPodAutoscaler, metricPos int, podsMatch []*v1.Pod, curRpsNum int32, kube_cli kubeclient.Client) int32 {
-	log.Printf("[HPA] genRepNumFromMemory\n")
+
+	if hpadbg {
+		log.Printf("[HPA] genRepNumFromMemory\n")
+	}
 	//需要取得hpa中相关的策略字段，以获取相关的统计窗口大小
 	upBehavior := hpa.Spec.Behavior.ScaleUp
 	downBehavior := hpa.Spec.Behavior.ScaleDown
@@ -367,8 +388,9 @@ func genRepNumFromMemory(hpa *v1.HorizontalPodAutoscaler, metricPos int, podsMat
 
 	upPeriod := upBehavior.PeriodSeconds
 	downPeriod := downBehavior.PeriodSeconds
-	log.Printf("[HPA] UpPeriod: %v, DownPeriod: %v\n", upPeriod, downPeriod)
-
+	if hpadbg {
+		log.Printf("[HPA] UpPeriod: %v, DownPeriod: %v\n", upPeriod, downPeriod)
+	}
 	// spec中metrics的模板，包含资源类型，目标值等
 	metricsTplt := hpa.Spec.Metrics[metricPos]
 	fmt.Print(string(metricsTplt.Name))
@@ -388,7 +410,9 @@ func genRepNumFromMemory(hpa *v1.HorizontalPodAutoscaler, metricPos int, podsMat
 	if ratio > 1.5 {
 		var newRepNum int32 = 0
 		// 可以扩容
-		log.Printf("[HPA] UpScale: %v\n", hpa)
+		if hpadbg {
+			log.Printf("[HPA] UpScale: %v\n", hpa)
+		}
 
 		tryAdd := (int32)(math.Ceil((float64)((ratio - 1) * float32(curRpsNum))))
 		if hpa.Spec.Behavior.ScaleUp.Type == v1.PercentScalingPolicy {
@@ -416,8 +440,9 @@ func genRepNumFromMemory(hpa *v1.HorizontalPodAutoscaler, metricPos int, podsMat
 	if ratio < 0.5 {
 		var newRepNum int32 = 0
 		// 可以缩容
-		log.Printf("[HPA] DownScale: %v\n", hpa)
-
+		if hpadbg {
+			log.Printf("[HPA] DownScale: %v\n", hpa)
+		}
 		trySub := (int32)(math.Ceil((float64)((1 - ratio) * float32(curRpsNum))))
 		if hpa.Spec.Behavior.ScaleDown.Type == v1.PercentScalingPolicy {
 			trySubByPercent := (int32)(math.Ceil((float64)(hpa.Spec.Behavior.ScaleDown.Value * curRpsNum / 100)))
@@ -437,7 +462,7 @@ func genRepNumFromMemory(hpa *v1.HorizontalPodAutoscaler, metricPos int, podsMat
 	}
 
 	// 保持不变
-	log.Printf("[HPA] In tolerance, keep the same: %v\n", hpa)
+	log.Printf("[HPA] In tolerance interval, keep the same: %v\n", hpa)
 	return curRpsNum
 }
 
@@ -487,7 +512,9 @@ func genAvgMemoryUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.
 			}
 			if len(oneCtnr) != 0 {
 				avg = sum / float32(len(oneCtnr))
-				log.Printf("[HPA] Pod Metrics avg memory / one container: %v\n", avg)
+				if hpadbg {
+					log.Printf("[HPA] Pod Metrics avg memory / one container: %v\n", avg)
+				}
 			}
 			podMemSum += avg
 		}
@@ -495,7 +522,9 @@ func genAvgMemoryUsage(windowSz int32, podsMatch []*v1.Pod, kube_cli kubeclient.
 
 		// 计算Pod的平均内存使用率
 		// 默认是所有container的平均值
-		log.Printf("[HPA] Pod Metrics avg memory / all containers in one pod: %v\n", podMemAvg)
+		if hpadbg {
+			log.Printf("[HPA] Pod Metrics avg memory / all containers in one pod: %v\n", podMemAvg)
+		}
 		allPodMemAvg += podMemAvg
 	}
 
