@@ -24,7 +24,7 @@ import (
 // 	mc.Run()
 // }
 
-var mdebug bool = true
+var mdebug bool = false
 
 type metricsCollector struct {
 	// 从cadvisor中获取容器指标的操作者
@@ -101,7 +101,9 @@ func (mc *metricsCollector) Run() {
 						if err != nil {
 							log.Printf("get metrics err: %v", err.Error())
 						}
-						log.Printf("metrics to be uploaded: %v", curMetrics)
+						if mdebug {
+							log.Printf("metrics to be uploaded: %v", curMetrics)
+						}
 						// 上传指标
 						err = mc.uploadMetrics(curMetrics)
 						if err != nil {
@@ -140,7 +142,9 @@ func (mc *metricsCollector) init() {
 func (mc *metricsCollector) SetPodInfo(podStats []*runtime.PodStatus) {
 	// 由kubelet设置pod信息
 	// 注意是Pod 到 容器非人的字符串 的映射
-	log.Printf("set pod info: %v", podStats)
+	if mdebug {
+		log.Printf("set pod info: %v", podStats)
+	}
 	mc.podStatsLock.Lock()
 	if mc.podStats == nil {
 		mc.podStats = make([]*runtime.PodStatus, 0)
@@ -206,12 +210,16 @@ func (mc *metricsCollector) getMetrics() ([]*v1.PodRawMetrics, error) {
 				//如果比上次时间戳还小，就不用上传
 				if lastTime, ok := mc.conLastTime[dockerId]; ok {
 					if !item.Timestamp.After(lastTime) {
-						fmt.Printf("Timestamp is not later than last time, no update\n")
+						if mdebug {
+							fmt.Printf("Timestamp is not later than last time, no update\n")
+						}
 						continue
 					}
 				}
 				// 更新时间戳
-				fmt.Printf("update Timestamp\n")
+				if mdebug {
+					fmt.Printf("update Timestamp\n")
+				}
 				mc.conLastTime[dockerId] = item.Timestamp
 
 				cMetricItem.TimeStamp = item.Timestamp
