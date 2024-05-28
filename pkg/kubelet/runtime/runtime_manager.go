@@ -17,7 +17,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 
 	v1 "minikubernetes/pkg/api/v1"
@@ -438,13 +437,13 @@ func (rm *runtimeManager) createContainer(ct *v1.Container, PauseId string, PodI
 	// case <-statusCh:
 	// }
 
-	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		//panic(err)
-		return "", err
-	}
-
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
+	//out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
+	//if err != nil {
+	//	//panic(err)
+	//	return "", err
+	//}
+	//
+	//stdcopy.StdCopy(os.Stdout, os.Stderr, out)
 	return resp.ID, nil
 }
 
