@@ -21,6 +21,7 @@ import (
 	"time"
 
 	gin "github.com/gin-gonic/gin"
+	kubeutils "minikubernetes/pkg/utils"
 )
 
 /* this is the simple routine of apiserver */
@@ -2802,9 +2803,9 @@ func (s *kubeApiServer) validatePV(pv *v1.PersistentVolume, urlNamespace string)
 	if err != nil {
 		return fmt.Errorf("invalid capacity format")
 	}
-	if pv.Spec.NFS == nil {
-		return fmt.Errorf("nfs spec is required")
-	}
+	//if pv.Spec.NFS == nil {
+	//	return fmt.Errorf("nfs spec is required")
+	//}
 	return nil
 }
 
@@ -2995,6 +2996,9 @@ func (s *kubeApiServer) validatePVC(pvc *v1.PersistentVolumeClaim, urlNamespace 
 	}
 	if pvc.Kind != "PersistentVolumeClaim" {
 		return fmt.Errorf("invalid api object kind")
+	}
+	if _, err := kubeutils.ParseSize(pvc.Spec.Request); err != nil {
+		return fmt.Errorf("invalid pvc request")
 	}
 	return nil
 }

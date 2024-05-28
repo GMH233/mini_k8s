@@ -503,18 +503,19 @@ type PersistentVolume struct {
 
 type PersistentVolumeSpec struct {
 	// 存储容量, 字符串表示(如1Mi)
-	Capacity               string `json:"capacity,omitempty"`
-	PersistentVolumeSource `json:",inline"`
+	Capacity string `json:"capacity,omitempty"`
+	//PersistentVolumeSource `json:",inline"`
+	StorageClassName string `json:"storageClassName,omitempty"`
 }
 
-type PersistentVolumeSource struct {
-	NFS *NFSVolumeSource `json:"nfs,omitempty"`
-}
-
-type NFSVolumeSource struct {
-	Server string `json:"server,omitempty"`
-	Path   string `json:"path,omitempty"`
-}
+//type PersistentVolumeSource struct {
+//	NFS *NFSVolumeSource `json:"nfs,omitempty"`
+//}
+//
+//type NFSVolumeSource struct {
+//	Server string `json:"server,omitempty"`
+//	Path   string `json:"path,omitempty"`
+//}
 
 type PersistentVolumePhase string
 
@@ -527,7 +528,10 @@ const (
 )
 
 type PersistentVolumeStatus struct {
-	Phase PersistentVolumePhase `json:"phase,omitempty"`
+	Phase     PersistentVolumePhase `json:"phase,omitempty"`
+	Server    string                `json:"server,omitempty"`
+	Path      string                `json:"path,omitempty"`
+	ClaimName string                `json:"claimName,omitempty"`
 }
 
 type PersistentVolumeClaim struct {
@@ -538,8 +542,8 @@ type PersistentVolumeClaim struct {
 }
 
 type PersistentVolumeClaimSpec struct {
-	Requests string            `json:"requests,omitempty"`
-	Selector map[string]string `json:"selector,omitempty"`
+	Request          string `json:"request,omitempty"`
+	StorageClassName string `json:"storageClassName,omitempty"`
 }
 
 type PersistentVolumeClaimPhase string
@@ -551,5 +555,6 @@ const (
 )
 
 type PersistentVolumeClaimStatus struct {
-	Phase PersistentVolumeClaimPhase `json:"phase,omitempty"`
+	Phase      PersistentVolumeClaimPhase `json:"phase,omitempty"`
+	VolumeName string                     `json:"volumeName,omitempty"`
 }

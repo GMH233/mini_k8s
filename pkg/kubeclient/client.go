@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	v1 "minikubernetes/pkg/api/v1"
+	"minikubernetes/pkg/kubeapiserver/app"
 	"minikubernetes/pkg/kubectl/utils"
 	"net/http"
 )
@@ -34,6 +35,12 @@ type Client interface {
 	AddSidecarMapping(maps v1.SidecarMapping) error
 
 	GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error)
+
+	GetAllPVs() ([]*v1.PersistentVolume, error)
+	GetAllPVCs() ([]*v1.PersistentVolumeClaim, error)
+	UpdatePVStatus(pv *v1.PersistentVolume) error
+	UpdatePVCStatus(pvc *v1.PersistentVolumeClaim) error
+	AddPV(pv *v1.PersistentVolume) error
 }
 
 type client struct {
@@ -457,4 +464,137 @@ func (c *client) GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, e
 }
 
 func (c *client) GetAllPVs() ([]*v1.PersistentVolume, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001%s", c.apiServerIP, app.AllPVURL))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.PersistentVolume]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pv failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetAllPVCs() ([]*v1.PersistentVolumeClaim, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001%s", c.apiServerIP, app.AllPVCURL))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.PersistentVolumeClaim]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pvc failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) UpdatePVStatus(pv *v1.PersistentVolume) error {
+	url := fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/persistentvolumes/%s/status", c.apiServerIP, pv.Namespace, pv.Name)
+	jsonBytes, err := json.Marshal(pv.Status)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[*v1.PersistentVolume]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update pv status failed, error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) UpdatePVCStatus(pvc *v1.PersistentVolumeClaim) error {
+	url := fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/persistentvolumeclaims/%s/status", c.apiServerIP, pvc.Namespace, pvc.Name)
+	jsonBytes, err := json.Marshal(pvc.Status)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[*v1.PersistentVolumeClaim]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update pvc status failed, error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) AddPV(pv *v1.PersistentVolume) error {
+	jsonBytes, err := json.Marshal(pv)
+	if err != nil {
+		return err
+	}
+	// POST to API server
+	url := fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/persistentvolumes", c.apiServerIP, pv.Namespace)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[*v1.PersistentVolume]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add pv failed, error: %v", baseResponse.Error)
+	}
+	return nil
 }
