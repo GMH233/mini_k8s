@@ -64,8 +64,13 @@ type Volume struct {
 }
 
 type VolumeSource struct {
-	HostPath *HostPathVolumeSource `json:"hostPath,omitempty"`
-	EmptyDir *EmptyDirVolumeSource `json:"emptyDir,omitempty"`
+	HostPath              *HostPathVolumeSource              `json:"hostPath,omitempty"`
+	EmptyDir              *EmptyDirVolumeSource              `json:"emptyDir,omitempty"`
+	PersistentVolumeClaim *PersistentVolumeClaimVolumeSource `json:"persistentVolumeClaim,omitempty"`
+}
+
+type PersistentVolumeClaimVolumeSource struct {
+	ClaimName string `json:"claimName"`
 }
 
 // 挂载主机目录
@@ -487,4 +492,64 @@ type Subset struct {
 type SubsetSpec struct {
 	// pod名
 	Pods []string `json:"pods,omitempty"`
+}
+
+type PersistentVolume struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+	Spec       PersistentVolumeSpec   `json:"spec,omitempty"`
+	Status     PersistentVolumeStatus `json:"status,omitempty"`
+}
+
+type PersistentVolumeSpec struct {
+	// 存储容量, 字符串表示(如1Mi)
+	Capacity               string `json:"capacity,omitempty"`
+	PersistentVolumeSource `json:",inline"`
+}
+
+type PersistentVolumeSource struct {
+	NFS *NFSVolumeSource `json:"nfs,omitempty"`
+}
+
+type NFSVolumeSource struct {
+	Server string `json:"server,omitempty"`
+	Path   string `json:"path,omitempty"`
+}
+
+type PersistentVolumePhase string
+
+const (
+	VolumePending   PersistentVolumePhase = "Pending"
+	VolumeAvailable PersistentVolumePhase = "Available"
+	VolumeBound     PersistentVolumePhase = "Bound"
+	VolumeReleased  PersistentVolumePhase = "Released"
+	VolumeFailed    PersistentVolumePhase = "Failed"
+)
+
+type PersistentVolumeStatus struct {
+	Phase PersistentVolumePhase `json:"phase,omitempty"`
+}
+
+type PersistentVolumeClaim struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+	Spec       PersistentVolumeClaimSpec   `json:"spec,omitempty"`
+	Status     PersistentVolumeClaimStatus `json:"status,omitempty"`
+}
+
+type PersistentVolumeClaimSpec struct {
+	Requests string            `json:"requests,omitempty"`
+	Selector map[string]string `json:"selector,omitempty"`
+}
+
+type PersistentVolumeClaimPhase string
+
+const (
+	ClaimPending PersistentVolumeClaimPhase = "Pending"
+	ClaimBound   PersistentVolumeClaimPhase = "Bound"
+	ClaimLost    PersistentVolumeClaimPhase = "Lost"
+)
+
+type PersistentVolumeClaimStatus struct {
+	Phase PersistentVolumeClaimPhase `json:"phase,omitempty"`
 }

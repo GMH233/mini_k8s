@@ -455,3 +455,6 @@ func (c *client) GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, e
 	}
 	return baseResponse.Data, nil
 }
+
+func (c *client) GetAllPVs() ([]*v1.PersistentVolume, error) {
+}
