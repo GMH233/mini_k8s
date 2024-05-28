@@ -466,11 +466,16 @@ func (rm *runtimeManager) checkImages(repotag string) (bool, error) {
 	for _, image := range images {
 		//fmt.Printf("ID: %s\n", image.ID)
 		//fmt.Printf("RepoTags: %v\n", image.RepoTags)
-		if len(image.RepoTags) == 0 {
-			continue
-		}
-		if image.RepoTags[0] == repotag {
-			return true, nil
+		//if len(image.RepoTags) == 0 {
+		//	continue
+		//}
+		//if image.RepoTags[0] == repotag {
+		//	return true, nil
+		//}
+		for _, rt := range image.RepoTags {
+			if rt == repotag {
+				return true, nil
+			}
 		}
 		//fmt.Printf("Size: %d\n", image.Size)
 		//fmt.Println("------------------------")
