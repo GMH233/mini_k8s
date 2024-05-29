@@ -21,14 +21,21 @@ func TestParseSize(t *testing.T) {
 		unit *= 1024
 	}
 	errSizeStrs := []string{
+		"",
 		"100K",
 		"100M",
 		"100G",
+		"100Kib",
+		"100Mib",
+		"100Gib",
+		"aKi",
+		"b90Mi",
 	}
 	for _, sizeStr := range errSizeStrs {
 		_, err := ParseSize(sizeStr)
 		if err == nil {
 			t.Errorf("ParseSize failed, expected error")
 		}
+		t.Log(err)
 	}
 }

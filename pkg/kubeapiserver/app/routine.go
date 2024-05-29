@@ -2792,20 +2792,23 @@ func (s *kubeApiServer) validatePV(pv *v1.PersistentVolume, urlNamespace string)
 	if !strings.HasSuffix(pv.Spec.Capacity, "Gi") && !strings.HasSuffix(pv.Spec.Capacity, "Mi") && !strings.HasSuffix(pv.Spec.Capacity, "Ki") {
 		return fmt.Errorf("invalid capacity format")
 	}
-	var err error = nil
-	if strings.HasSuffix(pv.Spec.Capacity, "Gi") {
-		_, err = strconv.Atoi(strings.TrimSuffix(pv.Spec.Capacity, "Gi"))
-	} else if strings.HasSuffix(pv.Spec.Capacity, "Mi") {
-		_, err = strconv.Atoi(strings.TrimSuffix(pv.Spec.Capacity, "Mi"))
-	} else {
-		_, err = strconv.Atoi(strings.TrimSuffix(pv.Spec.Capacity, "Ki"))
-	}
-	if err != nil {
-		return fmt.Errorf("invalid capacity format")
-	}
+	//var err error = nil
+	//if strings.HasSuffix(pv.Spec.Capacity, "Gi") {
+	//	_, err = strconv.Atoi(strings.TrimSuffix(pv.Spec.Capacity, "Gi"))
+	//} else if strings.HasSuffix(pv.Spec.Capacity, "Mi") {
+	//	_, err = strconv.Atoi(strings.TrimSuffix(pv.Spec.Capacity, "Mi"))
+	//} else {
+	//	_, err = strconv.Atoi(strings.TrimSuffix(pv.Spec.Capacity, "Ki"))
+	//}
+	//if err != nil {
+	//	return fmt.Errorf("invalid capacity format")
+	//}
 	//if pv.Spec.NFS == nil {
 	//	return fmt.Errorf("nfs spec is required")
 	//}
+	if _, err := kubeutils.ParseSize(pv.Spec.Capacity); err != nil {
+		return fmt.Errorf("invalid capacity format")
+	}
 	return nil
 }
 
