@@ -140,9 +140,7 @@ func NewRuntimeManager(nameserverIP string, client kubeletclient.KubeletClient) 
 	return manager
 }
 
-func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
-	rm.lock.Lock()
-	defer rm.lock.Unlock()
+func (rm *runtimeManager) addPodLocked(pod *v1.Pod) error {
 	//PauseId, err := rm.CreatePauseContainer(pod.UID, pod.Name, pod.Namespace)
 	PauseId, err := rm.CreatePauseContainer(pod)
 	if err != nil {
@@ -171,6 +169,12 @@ func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
 	}
 
 	return nil
+}
+
+func (rm *runtimeManager) AddPod(pod *v1.Pod) error {
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+	return rm.addPodLocked(pod)
 }
 
 // func (rm *runtimeManager) CreatePauseContainer(PodID v1.UID, PodName string, PodNameSpace string) (string, error) {
@@ -580,9 +584,7 @@ func (rm *runtimeManager) checkContainerStatus(ct types.Container, ct_todo *Cont
 	ct_todo.State = ContainerStateUnknown
 }
 
-func (rm *runtimeManager) DeletePod(ID v1.UID) error {
-	rm.lock.Lock()
-	defer rm.lock.Unlock()
+func (rm *runtimeManager) deletePodLocked(ID v1.UID) error {
 	containers, err := rm.getAllContainersIncludingPause()
 	if err != nil {
 		return err
@@ -612,6 +614,12 @@ func (rm *runtimeManager) DeletePod(ID v1.UID) error {
 		//}
 	}
 	return nil
+}
+
+func (rm *runtimeManager) DeletePod(ID v1.UID) error {
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+	return rm.deletePodLocked(ID)
 }
 
 func (rm *runtimeManager) getAllContainersIncludingPause() ([]types.Container, error) {
@@ -664,13 +672,33 @@ func (rm *runtimeManager) deleteContainer(ct types.Container) error {
 }
 
 func (rm *runtimeManager) RestartPod(pod *v1.Pod) error {
-	err := rm.DeletePod(pod.UID)
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+	//err := rm.deletePodLocked(pod.UID)
+	//if err != nil {
+	//	return err
+	//}
+	//err = rm.addPodLocked(pod)
+	//if err != nil {
+	//	return err
+	//}
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return err
 	}
-	err = rm.AddPod(pod)
+	defer cli.Close()
+	containers, err := rm.getAllContainers()
 	if err != nil {
 		return err
+	}
+	noWaitTimeout := 0
+	for _, ct := range containers {
+		if ct.Labels["PodID"] == string(pod.UID) {
+			err = cli.ContainerRestart(context.Background(), ct.ID, container.StopOptions{Timeout: &noWaitTimeout})
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -801,6 +829,8 @@ func (rm *runtimeManager) injectSideCar(pauseID string, tag string, pod *v1.Pod)
 }
 
 func (rm *runtimeManager) CleanVolumes(pod *v1.Pod) error {
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
 	for _, volume := range pod.Spec.Volumes {
 		if volume.HostPath != nil {
 			continue
