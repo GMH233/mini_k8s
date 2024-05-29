@@ -53,12 +53,21 @@ func (pc *pvController) syncLoopIteration(syncPV bool) {
 }
 
 func (pc *pvController) syncLoopIterationPV() {
-	// 获取所有pv
-	log.Printf("Checking PV...")
+	log.Println("Checking PV...")
+	// 获取所有pv和pvc
 	allPV, err := pc.client.GetAllPVs()
 	if err != nil {
 		log.Printf("get all pv failed, err: %v\n", err)
 		return
+	}
+	allPVC, err := pc.client.GetAllPVCs()
+	if err != nil {
+		log.Printf("get all pvc failed, err: %v\n", err)
+		return
+	}
+	pvcMap := make(map[string]struct{})
+	for _, pvc := range allPVC {
+		pvcMap[utils.GetObjectFullName(&pvc.ObjectMeta)] = struct{}{}
 	}
 	// 遍历pv，若处于Pending状态，则创建
 	var pvUpdates []*v1.PersistentVolume
@@ -74,6 +83,14 @@ func (pc *pvController) syncLoopIterationPV() {
 			pv.Status.Phase = v1.VolumeAvailable
 			pvUpdates = append(pvUpdates, pv)
 			log.Printf("pv %v created\n", pv.Name)
+		} else if pv.Status.Phase == v1.VolumeBound {
+			// 检查是否对应的pvc存在
+			if _, ok := pvcMap[pv.Namespace+"_"+pv.Status.ClaimName]; !ok {
+				pv.Status.Phase = v1.VolumeAvailable
+				pv.Status.ClaimName = ""
+				pvUpdates = append(pvUpdates, pv)
+				log.Printf("pv %v unbound\n", pv.Name)
+			}
 		}
 	}
 	for _, pv := range pvUpdates {
@@ -179,11 +196,11 @@ func (pc *pvController) syncLoopIterationPVC() {
 					APIVersion: "v1",
 				},
 				ObjectMeta: v1.ObjectMeta{
-					Name: fmt.Sprintf("pv-%s", pvc.Name),
+					Name:      fmt.Sprintf("pv-%s", pvc.Name),
 					Namespace: pvc.Namespace,
 				},
 				Spec: v1.PersistentVolumeSpec{
-					Capacity: pvc.Spec.Request,
+					Capacity:         pvc.Spec.Request,
 					StorageClassName: storageClass,
 				},
 			}
