@@ -658,13 +658,34 @@ func (rm *runtimeManager) deleteContainer(ct types.Container) error {
 }
 
 func (rm *runtimeManager) RestartPod(pod *v1.Pod) error {
-	err := rm.DeletePod(pod.UID)
+	//err := rm.DeletePod(pod.UID)
+	//if err != nil {
+	//	return err
+	//}
+	//err = rm.AddPod(pod)
+	//if err != nil {
+	//	return err
+	//}
+	//return nil
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return err
 	}
-	err = rm.AddPod(pod)
+	defer cli.Close()
+	containers, err := rm.getAllContainers()
 	if err != nil {
 		return err
+	}
+	noWaitTimeout := 0
+	for _, ct := range containers {
+		if ct.Labels["PodID"] == string(pod.UID) {
+			err = cli.ContainerRestart(context.Background(), ct.ID, container.StopOptions{Timeout: &noWaitTimeout})
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
