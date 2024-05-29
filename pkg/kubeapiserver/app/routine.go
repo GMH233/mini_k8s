@@ -253,11 +253,13 @@ func (ser *kubeApiServer) binder() {
 
 	ser.router.GET(AllPVURL, ser.GetAllPVsHandler)
 	ser.router.POST(NamespacePVURL, ser.AddPVHandler)
+	ser.router.GET(SinglePVURL, ser.GetPVHandler)
 	ser.router.DELETE(SinglePVURL, ser.DeletePVHandler)
 	ser.router.POST(PVStatusURL, ser.UpdatePVStatusHandler)
 
 	ser.router.GET(AllPVCURL, ser.GetAllPVCsHandler)
 	ser.router.POST(NamespacePVCURL, ser.AddPVCHandler)
+	ser.router.GET(SinglePVCURL, ser.GetPVCHandler)
 	ser.router.DELETE(SinglePVCURL, ser.DeletePVCHandler)
 	ser.router.POST(PVCStatusURL, ser.UpdatePVCStatusHandler)
 }
@@ -3173,6 +3175,62 @@ func (s *kubeApiServer) DeletePVCHandler(c *gin.Context) {
 		})
 		return
 	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.PersistentVolumeClaim]{
+		Data: &pvc,
+	})
+}
+
+func (s *kubeApiServer) GetPVHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	namespace := c.Param("namespace")
+	pvName := c.Param("pvname")
+	if namespace == "" || pvName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.PersistentVolume]{
+			Error: "namespace and persistent volume name cannot be empty",
+		})
+		return
+	}
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/persistentvolumes/%s", namespace, pvName)
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.PersistentVolume]{
+			Error: fmt.Sprintf("persistent volume %s/%s not found", namespace, pvName),
+		})
+		return
+	}
+	allKey := fmt.Sprintf("/registry/persistentvolumes/%s", uid)
+	pvJson, _ := s.store_cli.Get(allKey)
+	var pv v1.PersistentVolume
+	_ = json.Unmarshal([]byte(pvJson), &pv)
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.PersistentVolume]{
+		Data: &pv,
+	})
+}
+
+func (s *kubeApiServer) GetPVCHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	namespace := c.Param("namespace")
+	pvcName := c.Param("pvcname")
+	if namespace == "" || pvcName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.PersistentVolumeClaim]{
+			Error: "namespace and persistent volume claim name cannot be empty",
+		})
+		return
+	}
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/persistentvolumeclaims/%s", namespace, pvcName)
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.PersistentVolumeClaim]{
+			Error: fmt.Sprintf("persistent volume claim %s/%s not found", namespace, pvcName),
+		})
+		return
+	}
+	allKey := fmt.Sprintf("/registry/persistentvolumeclaims/%s", uid)
+	pvcJson, _ := s.store_cli.Get(allKey)
+	var pvc v1.PersistentVolumeClaim
+	_ = json.Unmarshal([]byte(pvcJson), &pvc)
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.PersistentVolumeClaim]{
 		Data: &pvc,
 	})

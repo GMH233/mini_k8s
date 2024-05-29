@@ -23,3 +23,17 @@ func TestKubeletClient_GetPodsByNodeName(t *testing.T) {
 	}
 	t.Log(string(podsJson))
 }
+
+func TestGetPVByPVC(t *testing.T) {
+	kubeClient := NewKubeletClient(apiServerIP)
+	pv, err := kubeClient.GetPVByPVCName("my-pvc", "default")
+	if err != nil {
+		t.Log(err)
+		return
+	}
+	pvJson, err := json.Marshal(pv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(string(pvJson))
+}

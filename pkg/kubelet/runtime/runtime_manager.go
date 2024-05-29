@@ -6,6 +6,7 @@ import (
 	"io"
 	"minikubernetes/pkg/microservice/envoy"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ import (
 
 	v1 "minikubernetes/pkg/api/v1"
 	nw "minikubernetes/pkg/kubelet/network"
+
+	kubeletclient "minikubernetes/pkg/kubelet/client"
 )
 
 type RuntimeManager interface {
@@ -29,12 +32,14 @@ type RuntimeManager interface {
 	GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error)
 	DeletePod(ID v1.UID) error
 	RestartPod(pod *v1.Pod) error
+	//CleanVolumes(pod *v1.Pod) error
 }
 
 type runtimeManager struct {
 	lock         sync.Mutex
 	IpMap        map[v1.UID]string
 	nameserverIP string
+	client       kubeletclient.KubeletClient
 }
 
 func (rm *runtimeManager) GetAllPods() ([]*Pod, error) {
@@ -127,10 +132,11 @@ func (rm *runtimeManager) getPodContainers(PodName string) ([]*ContainerStatus, 
 	return ret, nil
 }
 
-func NewRuntimeManager(nameserverIP string) RuntimeManager {
+func NewRuntimeManager(nameserverIP string, client kubeletclient.KubeletClient) RuntimeManager {
 	manager := &runtimeManager{}
 	manager.IpMap = make(map[v1.UID]string)
 	manager.nameserverIP = nameserverIP
+	manager.client = client
 	return manager
 }
 
@@ -673,7 +679,7 @@ func (rm *runtimeManager) RestartPod(pod *v1.Pod) error {
 func (rm *runtimeManager) createVolumeDir(pod *v1.Pod) (map[string]string, error) {
 	ret := make(map[string]string)
 	for _, volume := range pod.Spec.Volumes {
-		if volume.EmptyDir == nil && volume.HostPath == nil {
+		if volume.EmptyDir == nil && volume.HostPath == nil && volume.PersistentVolumeClaim == nil {
 			return nil, fmt.Errorf("create volume dir: volume %s has no source", volume.Name)
 		}
 		if volume.HostPath != nil && volume.EmptyDir != nil {
@@ -687,11 +693,27 @@ func (rm *runtimeManager) createVolumeDir(pod *v1.Pod) (map[string]string, error
 				return nil, fmt.Errorf("create volume dir: failed to create volume dir %s: %v", dir, err)
 			}
 			ret[volume.Name] = dir
-		} else {
+		} else if volume.HostPath != nil {
 			dir := volume.HostPath.Path
 			err := os.MkdirAll(dir, os.ModePerm)
 			if err != nil {
 				return nil, fmt.Errorf("create volume dir: failed to create volume dir %s: %v", dir, err)
+			}
+			ret[volume.Name] = dir
+		} else {
+			pv, err := rm.client.GetPVByPVCName(volume.PersistentVolumeClaim.ClaimName, pod.Namespace)
+			if err != nil {
+				return nil, fmt.Errorf("create volume dir: failed to get pv by pvc name %s: %v", volume.PersistentVolumeClaim.ClaimName, err)
+			}
+			dir := fmt.Sprintf("/tmp/minikubernetes/volumes/%s/%s", string(pod.UID), volume.Name)
+			err = os.MkdirAll(dir, os.ModePerm)
+			if err != nil {
+				return nil, fmt.Errorf("create volume dir: failed to create volume dir %s: %v", dir, err)
+			}
+			// mount -t nfs -o vers=3
+			output, err := exec.Command("mount", "-t", "nfs", "-o", "vers=3", pv.Status.Server+":"+pv.Status.Path, dir).CombinedOutput()
+			if err != nil {
+				return nil, fmt.Errorf("create volume dir: failed to mount nfs: %v, output: %s", err, output)
 			}
 			ret[volume.Name] = dir
 		}

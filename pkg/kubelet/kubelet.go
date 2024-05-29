@@ -42,7 +42,7 @@ func NewMainKubelet(nodeName string, kubeClient client.KubeletClient) (*Kubelet,
 	kl.nodeName = nodeName
 	kl.podManger = kubepod.NewPodManager()
 	kl.kubeClient = kubeClient
-	kl.runtimeManager = runtime.NewRuntimeManager(nameserverIP)
+	kl.runtimeManager = runtime.NewRuntimeManager(nameserverIP, kubeClient)
 	kl.cache = runtime.NewCache()
 	kl.pleg = pleg.NewPLEG(kl.runtimeManager, kl.cache)
 	kl.podWorkers = NewPodWorkers(kl, kl.cache)

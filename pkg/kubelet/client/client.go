@@ -14,6 +14,7 @@ type KubeletClient interface {
 	UpdatePodStatus(pod *v1.Pod, status *v1.PodStatus) error
 	RegisterNode(address string) (*v1.Node, error)
 	UnregisterNode(nodeName string) error
+	GetPVByPVCName(pvcName, pvcNamespace string) (*v1.PersistentVolume, error)
 }
 
 type kubeletClient struct {
@@ -142,4 +143,46 @@ func (c *kubeletClient) UnregisterNode(nodeName string) error {
 		return fmt.Errorf("unregister node failed, error: %s", baseResponse.Error)
 	}
 	return nil
+}
+
+func (c *kubeletClient) GetPVByPVCName(pvcName, pvcNamespace string) (*v1.PersistentVolume, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/persistentvolumeclaims/%s", c.apiServerIP, pvcNamespace, pvcName))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.PersistentVolumeClaim]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pv by pvc name failed, error: %s", baseResponse.Error)
+	}
+	pvc := baseResponse.Data
+	if pvc.Status.VolumeName == "" {
+		return nil, fmt.Errorf("pv not found")
+	}
+	resp, err = http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/persistentvolumes/%s", c.apiServerIP, pvcNamespace, pvc.Status.VolumeName))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var pvBaseResponse v1.BaseResponse[*v1.PersistentVolume]
+	err = json.Unmarshal(body, &pvBaseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pv by pvc name failed, error: %s", pvBaseResponse.Error)
+	}
+	return pvBaseResponse.Data, nil
 }
