@@ -32,7 +32,7 @@ type RuntimeManager interface {
 	GetPodStatus(ID v1.UID, PodName string, PodSpace string) (*PodStatus, error)
 	DeletePod(ID v1.UID) error
 	RestartPod(pod *v1.Pod) error
-	//CleanVolumes(pod *v1.Pod) error
+	CleanVolumes(pod *v1.Pod) error
 }
 
 type runtimeManager struct {
@@ -797,5 +797,28 @@ func (rm *runtimeManager) injectSideCar(pauseID string, tag string, pod *v1.Pod)
 	if err = cli.ContainerStart(context.Background(), resp.ID, container.StartOptions{}); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (rm *runtimeManager) CleanVolumes(pod *v1.Pod) error {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.HostPath != nil {
+			continue
+		}
+		dir := fmt.Sprintf("/tmp/minikubernetes/volumes/%s/%s", string(pod.UID), volume.Name)
+		if volume.PersistentVolumeClaim != nil {
+			// umount dir
+			output, err := exec.Command("umount", dir).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("clean volumes: failed to umount nfs: %v, output: %s", err, output)
+			}
+		}
+		err := os.RemoveAll(dir)
+		if err != nil {
+			return fmt.Errorf("clean volumes: failed to remove volume dir %s: %v", dir, err)
+		}
+	}
+	dir := fmt.Sprintf("/tmp/minikubernetes/volumes/%s", string(pod.UID))
+	_ = os.RemoveAll(dir)
 	return nil
 }

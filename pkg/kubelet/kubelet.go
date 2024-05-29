@@ -215,6 +215,10 @@ func (kl *Kubelet) SyncPod(pod *v1.Pod, syncPodType types.SyncPodType, podStatus
 			log.Printf("Failed to kill pod %v: %v\n", pod.Name, err)
 			return
 		}
+		err = kl.runtimeManager.CleanVolumes(pod)
+		if err != nil {
+			log.Printf("Failed to clean volumes for pod %v: %v\n", pod.Name, err)
+		}
 		log.Printf("Pod %v killed.\n", pod.Name)
 	case types.SyncPodRecreate:
 		log.Printf("Recreating pod %v\n", pod.Name)
