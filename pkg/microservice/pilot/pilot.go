@@ -182,14 +182,20 @@ func (p *pilot) rollingUpdateWorkerLoop(rollingUpdate *v1.RollingUpdate, service
 				log.Printf("delete pod failed: %v", err)
 			}
 		}
-		time.Sleep(time.Duration(rollingUpdate.Spec.Interval) * time.Second)
+		time.Sleep(time.Duration(rollingUpdate.Spec.Interval) * time.Second / 2)
 		blockedPods := pods[i:j]
 		for _, blockedPod := range blockedPods {
-			err = p.client.AddPod(*blockedPod)
+			newPod := v1.Pod{
+				TypeMeta:   blockedPod.TypeMeta,
+				ObjectMeta: blockedPod.ObjectMeta,
+				Spec:       rollingUpdate.Spec.NewPodSpec,
+			}
+			err = p.client.AddPod(newPod)
 			if err != nil {
 				log.Printf("create pod failed: %v", err)
 			}
 		}
+		time.Sleep(time.Duration(rollingUpdate.Spec.Interval) * time.Second / 2)
 	}
 	rollingUpdate.Status.Phase = v1.RollingUpdateFinished
 	err = p.client.UpdateRollingUpdateStatus(rollingUpdate.Name, rollingUpdate.Namespace, &rollingUpdate.Status)
