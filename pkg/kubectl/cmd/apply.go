@@ -1,25 +1,31 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/spf13/cobra"
-	"minikubernetes/pkg/kubectl/client"
+	v1 "minikubernetes/pkg/api/v1"
+	"minikubernetes/pkg/kubeclient"
 	"minikubernetes/pkg/kubectl/utils"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func init() {
+	applyCmd.Flags().StringP("file", "f", "", "YAML file to apply resources from")
 	rootCmd.AddCommand(applyCmd)
 }
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply a configuration to a resource by yaml file",
-	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		for _, arg := range args {
-			apply(arg)
+		filename, _ := cmd.Flags().GetString("file")
+		if filename == "" {
+			fmt.Println("Usage: kubectl apply -f [filename]")
+			return
 		}
+		apply(filename)
 	},
 }
 
@@ -29,13 +35,90 @@ func apply(filename string) {
 		fmt.Println(err)
 		return
 	}
+	kind := utils.GetKind(content)
+	if kind == "" {
+		fmt.Println("kind not found")
+		return
+	}
 	jsonBytes, err := utils.YAML2JSON(content)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println(string(jsonBytes))
-	err = client.NewKubectlClient(apiServerIP).AddPod(jsonBytes)
+
+	fmt.Printf("get json: %v\n", string(jsonBytes))
+	// 根据kind区分不同的资源
+	switch kind {
+	case "Pod":
+		fmt.Println("Apply Pod")
+		var podGenerated v1.Pod
+		err := json.Unmarshal(jsonBytes, &podGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyPod(podGenerated)
+		fmt.Println("Pod Applied")
+
+	case "Service":
+		fmt.Println("Apply Service")
+		var serviceGenerated v1.Service
+		err := json.Unmarshal(jsonBytes, &serviceGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyService(serviceGenerated)
+		fmt.Println("Service Applied")
+
+	case "ReplicaSet":
+		fmt.Println("Apply ReplicaSet")
+		var replicaSetGenerated v1.ReplicaSet
+		err := json.Unmarshal(jsonBytes, &replicaSetGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyReplicaSet(replicaSetGenerated)
+		fmt.Println("ReplicaSet Applied")
+	case "HorizontalPodAutoscaler":
+		fmt.Println("Apply HorizontalPodAutoscaler")
+		var hpaGenerated v1.HorizontalPodAutoscaler
+		err := json.Unmarshal(jsonBytes, &hpaGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyHPAScaler(hpaGenerated)
+		fmt.Println("HorizontalPodAutoscaler Applied")
+	}
+
+}
+func applyPod(pod v1.Pod) {
+	err := kubeclient.NewClient(apiServerIP).AddPod(pod)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+func applyService(service v1.Service) {
+	err := kubeclient.NewClient(apiServerIP).AddService(service)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+func applyReplicaSet(replicaSet v1.ReplicaSet) {
+	err := kubeclient.NewClient(apiServerIP).AddReplicaSet(replicaSet)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+func applyHPAScaler(hpa v1.HorizontalPodAutoscaler) {
+	err := kubeclient.NewClient(apiServerIP).AddHPAScaler(hpa)
 	if err != nil {
 		fmt.Println(err)
 		return
