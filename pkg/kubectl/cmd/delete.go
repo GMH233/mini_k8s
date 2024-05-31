@@ -44,6 +44,10 @@ var deleteCommand = &cobra.Command{
 				deleteHPA(args[1], "default")
 			case "replicaset":
 				deleteReplicaSet(args[1], "default")
+			case "virtualservice":
+				deleteVirtualService(args[1], "default")
+			case "subsets":
+				deleteSubset(args[1], "default")
 			}
 		} else if len(args) == 1 {
 			// 指定namespace和name
@@ -65,6 +69,10 @@ var deleteCommand = &cobra.Command{
 				deleteHPA(name, namespace)
 			case "replicaset":
 				deleteReplicaSet(name, namespace)
+			case "virtualservice":
+				deleteVirtualService(name, namespace)
+			case "subsets":
+				deleteSubset(name, namespace)
 			}
 
 		} else {
@@ -200,4 +208,20 @@ func deleteReplicaSet(replicaSetName, nameSpace string) {
 		fmt.Println(err)
 		return
 	}
+}
+
+func deleteVirtualService(vsName, nameSpace string) {
+	// err := kubeclient.NewClient(apiServerIP).DeleteVirtualService(vsName, nameSpace)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
+}
+
+func deleteSubset(subsetName, nameSpace string) {
+	// err := kubeclient.NewClient(apiServerIP).DeleteSubset(subsetName, nameSpace)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
 }

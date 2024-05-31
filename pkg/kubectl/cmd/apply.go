@@ -81,6 +81,7 @@ func apply(filename string) {
 		}
 		applyReplicaSet(replicaSetGenerated)
 		fmt.Println("ReplicaSet Applied")
+
 	case "HorizontalPodAutoscaler":
 		fmt.Println("Apply HorizontalPodAutoscaler")
 		var hpaGenerated v1.HorizontalPodAutoscaler
@@ -91,6 +92,29 @@ func apply(filename string) {
 		}
 		applyHPAScaler(hpaGenerated)
 		fmt.Println("HorizontalPodAutoscaler Applied")
+
+	case "VirtualService":
+		fmt.Println("Apply VirtualService")
+		var virtualServiceGenerated v1.VirtualService
+		err := json.Unmarshal(jsonBytes, &virtualServiceGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyVirtualService(virtualServiceGenerated)
+		fmt.Println("VirtualService Applied")
+
+	case "Subset":
+		fmt.Println("Apply Subset")
+		var subsetGenerated v1.Subset
+		err := json.Unmarshal(jsonBytes, &subsetGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applySubset(subsetGenerated)
+		fmt.Println("Subset Applied")
+
 	}
 
 }
@@ -123,4 +147,19 @@ func applyHPAScaler(hpa v1.HorizontalPodAutoscaler) {
 		fmt.Println(err)
 		return
 	}
+}
+
+func applyVirtualService(virtualService v1.VirtualService) {
+	// err := kubeclient.NewClient(apiServerIP).AddVirtualService(virtualService)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
+}
+func applySubset(subset v1.Subset) {
+	// err := kubeclient.NewClient(apiServerIP).AddSubset(subset)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
 }

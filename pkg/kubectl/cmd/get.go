@@ -34,6 +34,12 @@ var getCommand = &cobra.Command{
 			if args[0] == "replicasets" {
 				getAllReplicaSets()
 			}
+			if args[0] == "virtualservices" {
+				getAllVirtualServices()
+			}
+			if args[0] == "subsets" {
+				getAllSubsets()
+			}
 		}
 	},
 }
@@ -82,11 +88,32 @@ func getAllServices() {
 
 	ipDetailsTable := tablewriter.NewWriter(os.Stdout)
 	ipDetailsTable.SetHeader([]string{"Name/Service", "ClusterIP", "Port", "Endpoint", "Protocol"})
-	// for _, service := range services {
-	// 	for _, port := range service.Spec.Ports {
-	// 		ipDetailsTable.Append([]string{service.Name, service.Spec.ClusterIP, fmt.Sprint(port.Port), fmt.Sprint(port.NodePort), port.Protocol})
-	// 	}
-	// }
+	// todo 显示service的port和endpoint
+	for _, service := range services {
+		ip := service.Spec.ClusterIP
+
+		for _, svcPort := range service.Spec.Ports {
+			sideCarMpKey := fmt.Sprintf("%v:%v", ip, svcPort)
+
+			allSidecarMap, err := kubeclient.NewClient(apiServerIP).GetSidecarMapping()
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			if sidecarEPList := allSidecarMap[sideCarMpKey]; sidecarEPList != nil {
+				var epFmtStr string
+				for _, sidecarEP := range sidecarEPList {
+					for _, singleEP := range sidecarEP.Endpoints {
+						epFmtStr += fmt.Sprintf("%v:%v\n,", singleEP.IP, singleEP.TargetPort)
+					}
+				}
+				ipDetailsTable.Append([]string{service.Name, ip, fmt.Sprint(svcPort.Port), epFmtStr, fmt.Sprint(svcPort.Protocol)})
+			} else {
+				ipDetailsTable.Append([]string{service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", fmt.Sprint(svcPort.Protocol)})
+			}
+
+		}
+	}
 
 }
 func getAllHPAScalers() {
@@ -125,4 +152,12 @@ func getAllReplicaSets() {
 		table.Append([]string{"replicaset", replicaset.Namespace, replicaset.Name, fmt.Sprint(replicaset.Spec.Replicas)})
 	}
 	table.Render()
+}
+
+func getAllVirtualServices() {
+
+}
+
+func getAllSubsets() {
+
 }
