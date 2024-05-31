@@ -1696,6 +1696,14 @@ func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
 func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	var n v1.Node
+	err := c.ShouldBind(&n)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
+			Error: "invalid node json",
+		})
+		return
+	}
 	address := c.Query("address")
 	if net.ParseIP(address) == nil {
 		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
@@ -1740,6 +1748,7 @@ func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
 			Namespace:         Default_Namespace,
 			UID:               v1.UID(uuid.NewUUID()),
 			CreationTimestamp: timestamp.NewTimestamp(),
+			Labels:            n.Labels,
 		},
 		Status: v1.NodeStatus{
 			Address: address,
