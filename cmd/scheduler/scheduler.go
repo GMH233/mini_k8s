@@ -19,6 +19,8 @@ func main() {
 		break
 	case "Random_Policy":
 		break
+	case "NodeAffinity_Policy":
+		break
 	default:
 		fmt.Println("Invalid policy")
 		os.Exit(1)

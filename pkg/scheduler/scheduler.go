@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	Round_Policy  = "Round_Policy"
-	Random_Policy = "Random_Policy"
+	Round_Policy        = "Round_Policy"
+	Random_Policy       = "Random_Policy"
+	NodeAffinity_Policy = "NodeAffinity_Policy"
 )
 
 type Scheduler interface {
@@ -82,10 +83,47 @@ func (sc *scheduler) syncLoop() error {
 				return err
 			}
 			break
+		case NodeAffinity_Policy:
+			SelectedNodes, err := sc.nodesInNodeAffinityPolicy(reqs, limit, nodes, pod)
+			if err != nil {
+				return err
+			}
+			err = sc.addPodToNode(SelectedNodes, pod)
+			if err != nil {
+				return err
+			}
+			break
 		}
 
 	}
 	return nil
+}
+
+func (sc *scheduler) nodesInNodeAffinityPolicy(rqs []v1.ResourceList, lim []v1.ResourceList, nodes []*v1.Node, pod *v1.Pod) (*v1.Node, error) {
+	if pod.Labels == nil {
+		return sc.nodesInRandomPolicy(rqs, lim, nodes)
+	}
+	var selectedNode *v1.Node
+	for _, node := range nodes {
+		if node.Labels == nil {
+			continue
+		}
+		allLabelsMatch := true
+		for key, value := range pod.Labels {
+			if v, ok := node.Labels[key]; !ok || v != value {
+				allLabelsMatch = false
+				break
+			}
+		}
+		if allLabelsMatch {
+			selectedNode = node
+			break
+		}
+	}
+	if selectedNode == nil {
+		return sc.nodesInRandomPolicy(rqs, lim, nodes)
+	}
+	return selectedNode, nil
 }
 
 func (sc *scheduler) informPods() ([]*v1.Pod, error) {

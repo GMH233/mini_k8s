@@ -92,6 +92,10 @@ const (
 
 	SidecarMappingURL            = "/api/v1/sidecar-mapping"
 	SidecarServiceNameMappingURL = "/api/v1/sidecar-service-name-mapping"
+
+	AllRollingUpdateURL       = "/api/v1/rollingupdates"
+	NamespaceRollingUpdateURL = "/api/v1/namespaces/:namespace/rollingupdates"
+	SingleRollingUpdateURL    = "/api/v1/namespaces/:namespace/rollingupdates/:rollingupdatename"
 )
 
 /* NAMESPACE
@@ -239,6 +243,11 @@ func (ser *kubeApiServer) binder() {
 	ser.router.GET(SidecarMappingURL, ser.GetSidecarMapping)
 	ser.router.POST(SidecarMappingURL, ser.SaveSidecarMapping)
 	ser.router.GET(SidecarServiceNameMappingURL, ser.GetSidecarServiceNameMapping)
+
+	ser.router.GET(AllRollingUpdateURL, ser.GetAllRollingUpdatesHandler)
+	ser.router.POST(NamespaceRollingUpdateURL, ser.AddRollingUpdateHandler)
+	ser.router.POST(SingleRollingUpdateURL, ser.UpdateRollingUpdateStatusHandler)
+	ser.router.DELETE(SingleRollingUpdateURL, ser.DeleteRollingUpdateHandler)
 }
 
 func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
@@ -1696,6 +1705,14 @@ func (s *kubeApiServer) DeleteDNSHandler(c *gin.Context) {
 func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	var n v1.Node
+	err := c.ShouldBind(&n)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
+			Error: "invalid node json",
+		})
+		return
+	}
 	address := c.Query("address")
 	if net.ParseIP(address) == nil {
 		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.Node]{
@@ -1740,6 +1757,7 @@ func (s *kubeApiServer) RegisterNodeHandler(c *gin.Context) {
 			Namespace:         Default_Namespace,
 			UID:               v1.UID(uuid.NewUUID()),
 			CreationTimestamp: timestamp.NewTimestamp(),
+			Labels:            n.Labels,
 		},
 		Status: v1.NodeStatus{
 			Address: address,
@@ -2746,5 +2764,178 @@ func (s *kubeApiServer) GetSidecarServiceNameMapping(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[v1.SidecarServiceNameMapping]{
 		Data: mapping,
+	})
+}
+
+func (s *kubeApiServer) AddRollingUpdateHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	var ru v1.RollingUpdate
+	err := c.ShouldBind(&ru)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "invalid rolling update json",
+		})
+		return
+	}
+	namespace := c.Param("namespace")
+	if namespace == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "namespace is required",
+		})
+		return
+	}
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/rollingupdates/%s", namespace, ru.Name)
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err == nil && uid != "" {
+		c.JSON(http.StatusConflict, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: fmt.Sprintf("rolling update %s/%s already exists", namespace, ru.Name),
+		})
+		return
+	}
+	ru.Namespace = namespace
+	ru.CreationTimestamp = timestamp.NewTimestamp()
+	ru.UID = v1.UID(uuid.NewUUID())
+	ru.Status.Phase = v1.RollingUpdatePending
+	allKey := fmt.Sprintf("/registry/rollingupdates/%s", ru.UID)
+	ruJson, _ := json.Marshal(ru)
+	err = s.store_cli.Set(allKey, string(ruJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "error in writing rolling update to etcd",
+		})
+		return
+	}
+	err = s.store_cli.Set(namespaceKey, string(ru.UID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "error in writing rolling update to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusCreated, v1.BaseResponse[*v1.RollingUpdate]{
+		Data: &ru,
+	})
+}
+
+func (s *kubeApiServer) GetAllRollingUpdatesHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	allKey := "/registry/rollingupdates"
+	res, err := s.store_cli.GetSubKeysValues(allKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.RollingUpdate]{
+			Error: "error in reading from etcd",
+		})
+		return
+	}
+	rus := make([]*v1.RollingUpdate, 0)
+	for _, v := range res {
+		var ru v1.RollingUpdate
+		err = json.Unmarshal([]byte(v), &ru)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, v1.BaseResponse[[]*v1.RollingUpdate]{
+				Error: "error in json unmarshal",
+			})
+			return
+		}
+		rus = append(rus, &ru)
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[[]*v1.RollingUpdate]{
+		Data: rus,
+	})
+}
+
+func (s *kubeApiServer) UpdateRollingUpdateStatusHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	var ruStatus v1.RollingUpdateStatus
+	err := c.ShouldBind(&ruStatus)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.RollingUpdateStatus]{
+			Error: "invalid rolling update status json",
+		})
+		return
+	}
+	namespace := c.Param("namespace")
+	ruName := c.Param("rollingupdatename")
+	if namespace == "" || ruName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.RollingUpdateStatus]{
+			Error: "namespace and rolling update name cannot be empty",
+		})
+		return
+	}
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/rollingupdates/%s", namespace, ruName)
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.RollingUpdateStatus]{
+			Error: fmt.Sprintf("rolling update %s/%s not found", namespace, ruName),
+		})
+		return
+	}
+	allKey := fmt.Sprintf("/registry/rollingupdates/%s", uid)
+	ruJson, err := s.store_cli.Get(allKey)
+	if err != nil || ruJson == "" {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdateStatus]{
+			Error: "error in reading rolling update from etcd",
+		})
+		return
+	}
+	var ru v1.RollingUpdate
+	_ = json.Unmarshal([]byte(ruJson), &ru)
+
+	ru.Status = ruStatus
+	newRuJson, _ := json.Marshal(ru)
+	err = s.store_cli.Set(allKey, string(newRuJson))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdateStatus]{
+			Error: "error in writing rolling update to etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.RollingUpdateStatus]{
+		Data: &ruStatus,
+	})
+}
+
+func (s *kubeApiServer) DeleteRollingUpdateHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	namespace := c.Param("namespace")
+	ruName := c.Param("rollingupdatename")
+	if namespace == "" || ruName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "namespace and rolling update name cannot be empty",
+		})
+		return
+	}
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/rollingupdates/%s", namespace, ruName)
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: fmt.Sprintf("rolling update %s/%s not found", namespace, ruName),
+		})
+		return
+	}
+	allKey := fmt.Sprintf("/registry/rollingupdates/%s", uid)
+	ruJson, _ := s.store_cli.Get(allKey)
+	var ru v1.RollingUpdate
+	_ = json.Unmarshal([]byte(ruJson), &ru)
+	err = s.store_cli.Delete(namespaceKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "error in deleting rolling update from etcd",
+		})
+		return
+	}
+	err = s.store_cli.Delete(allKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "error in deleting rolling update from etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.RollingUpdate]{
+		Data: &ru,
 	})
 }

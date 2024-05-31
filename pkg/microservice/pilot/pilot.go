@@ -2,6 +2,7 @@ package pilot
 
 import (
 	"fmt"
+	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeclient"
 	"minikubernetes/pkg/utils"
@@ -44,6 +45,171 @@ func (p *pilot) SyncLoop() error {
 
 }
 
+func (p *pilot) doRollingUpdate(rollingUpdates []*v1.RollingUpdate, serviceMap map[string]*v1.Service, pods []*v1.Pod) {
+	for _, ru := range rollingUpdates {
+		if ru.Status.Phase != v1.RollingUpdatePending {
+			continue
+		}
+		serviceFullName := ru.Namespace + "_" + ru.Spec.ServiceRef
+		if service, ok := serviceMap[serviceFullName]; ok {
+			var servicePods []*v1.Pod
+			for _, pod := range pods {
+				if !p.isSelectorMatched(pod, service) {
+					continue
+				}
+				if pod.Status.Phase != v1.PodRunning {
+					continue
+				}
+				if pod.Status.PodIP == "" {
+					continue
+				}
+				servicePods = append(servicePods, pod)
+			}
+			if len(servicePods) != 0 {
+				go p.rollingUpdateWorkerLoop(ru, service, servicePods)
+			}
+		}
+	}
+}
+
+func (p *pilot) rollingUpdateWorkerLoop(rollingUpdate *v1.RollingUpdate, service *v1.Service, pods []*v1.Pod) {
+	updateNum := len(pods) - int(rollingUpdate.Spec.MinimumAlive)
+	if updateNum <= 0 {
+		log.Printf("cannot update now")
+		return
+	}
+	rollingUpdate.Status.Phase = v1.RollingUpdateRunning
+	err := p.client.UpdateRollingUpdateStatus(rollingUpdate.Name, rollingUpdate.Namespace, &rollingUpdate.Status)
+	if err != nil {
+		log.Printf("update rolling update status failed: %v", err)
+		return
+	}
+	subsetBlocked := &v1.Subset{
+		TypeMeta: v1.TypeMeta{
+			Kind:       "Subset",
+			APIVersion: "v1",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Name:      service.Name + "-blocked",
+			Namespace: rollingUpdate.Namespace,
+		},
+		Spec: v1.SubsetSpec{
+			Pods: nil,
+		},
+	}
+	subsetAvailable := &v1.Subset{
+		TypeMeta: v1.TypeMeta{
+			Kind:       "Subset",
+			APIVersion: "v1",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Name:      service.Name + "-available",
+			Namespace: rollingUpdate.Namespace,
+		},
+		Spec: v1.SubsetSpec{
+			Pods: nil,
+		},
+	}
+	err = p.client.AddSubset(subsetBlocked)
+	if err != nil {
+		log.Printf("add blocked subset failed: %v", err)
+		return
+	}
+	err = p.client.AddSubset(subsetAvailable)
+	if err != nil {
+		log.Printf("add available subset failed: %v", err)
+		return
+	}
+	vs := &v1.VirtualService{
+		TypeMeta: v1.TypeMeta{
+			Kind:       "VirtualService",
+			APIVersion: "v1",
+		},
+		ObjectMeta: v1.ObjectMeta{
+			Name:      service.Name + "-rolling-update",
+			Namespace: rollingUpdate.Namespace,
+		},
+		Spec: v1.VirtualServiceSpec{
+			ServiceRef: rollingUpdate.Spec.ServiceRef,
+			Port:       rollingUpdate.Spec.Port,
+			Subsets: []v1.VirtualServiceSubset{
+				{
+					Name:   service.Name + "-available",
+					Weight: &[]int32{1}[0],
+				},
+				{
+					Name:   service.Name + "-blocked",
+					Weight: &[]int32{0}[0],
+				},
+			},
+		},
+	}
+	err = p.client.AddVirtualService(vs)
+	if err != nil {
+		log.Printf("add virtual service failed: %v", err)
+		return
+	}
+	for i := 0; i < len(pods); i += updateNum {
+		log.Printf("rolling update: %d-%d", i, i+updateNum)
+		j := i + updateNum
+		if j > len(pods) {
+			j = len(pods)
+		}
+		blockedPodNames := make([]string, 0)
+		availablePodNames := make([]string, 0)
+		for k := 0; k < len(pods); k++ {
+			if k >= i && k < j {
+				log.Printf("blocked pod: %s", pods[k].Name)
+				blockedPodNames = append(blockedPodNames, pods[k].Name)
+			} else {
+				log.Printf("available pod: %s", pods[k].Name)
+				availablePodNames = append(availablePodNames, pods[k].Name)
+			}
+		}
+		subsetBlocked.Spec.Pods = blockedPodNames
+		subsetAvailable.Spec.Pods = availablePodNames
+		err = p.client.AddSubset(subsetBlocked)
+		if err != nil {
+			log.Printf("update blocked subset failed: %v", err)
+		}
+		err = p.client.AddSubset(subsetAvailable)
+		if err != nil {
+			log.Printf("update available subset failed: %v", err)
+		}
+		for _, blockedPodName := range blockedPodNames {
+			err = p.client.DeletePod(blockedPodName, rollingUpdate.Namespace)
+			if err != nil {
+				log.Printf("delete pod failed: %v", err)
+			}
+		}
+		time.Sleep(time.Duration(rollingUpdate.Spec.Interval) * time.Second)
+		blockedPods := pods[i:j]
+		for _, blockedPod := range blockedPods {
+			err = p.client.AddPod(*blockedPod)
+			if err != nil {
+				log.Printf("create pod failed: %v", err)
+			}
+		}
+	}
+	rollingUpdate.Status.Phase = v1.RollingUpdateFinished
+	err = p.client.UpdateRollingUpdateStatus(rollingUpdate.Name, rollingUpdate.Namespace, &rollingUpdate.Status)
+	if err != nil {
+		log.Printf("update rolling update status failed: %v", err)
+	}
+	err = p.client.DeleteVirtualService(vs)
+	if err != nil {
+		log.Printf("delete virtual service failed: %v", err)
+	}
+	err = p.client.DeleteSubset(subsetBlocked)
+	if err != nil {
+		log.Printf("delete blocked subset failed: %v", err)
+	}
+	err = p.client.DeleteSubset(subsetAvailable)
+	if err != nil {
+		log.Printf("delete available subset failed: %v", err)
+	}
+}
+
 func (p *pilot) syncLoopIteration() error {
 	var sideCarMap v1.SidecarMapping = make(v1.SidecarMapping)
 	pods, err := p.client.GetAllPods()
@@ -58,10 +224,16 @@ func (p *pilot) syncLoopIteration() error {
 	if err != nil {
 		return err
 	}
+	rollingUpdates, err := p.client.GetAllRollingUpdates()
+	if err != nil {
+		return err
+	}
 
 	servicesMap := p.makeFullMap(services)
 	endpointMap := p.getEndpoints(pods, services)
 	markedMap := p.makeMarkedMap(services)
+
+	p.doRollingUpdate(rollingUpdates, servicesMap, pods)
 
 	for _, vs := range virtualServices {
 		serviceNamespace := vs.Namespace

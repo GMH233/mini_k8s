@@ -12,7 +12,7 @@ import (
 type KubeletClient interface {
 	GetPodsByNodeName(nodeId string) ([]*v1.Pod, error)
 	UpdatePodStatus(pod *v1.Pod, status *v1.PodStatus) error
-	RegisterNode(address string) (*v1.Node, error)
+	RegisterNode(address string, node *v1.Node) (*v1.Node, error)
 	UnregisterNode(nodeName string) error
 }
 
@@ -86,14 +86,19 @@ func (kc *kubeletClient) UpdatePodStatus(pod *v1.Pod, status *v1.PodStatus) erro
 	return nil
 }
 
-func (c *kubeletClient) RegisterNode(address string) (*v1.Node, error) {
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s:8001/api/v1/nodes/register", c.apiServerIP), nil)
+func (c *kubeletClient) RegisterNode(address string, node *v1.Node) (*v1.Node, error) {
+	jsonBytes, err := json.Marshal(node)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s:8001/api/v1/nodes/register", c.apiServerIP), bytes.NewBuffer(jsonBytes))
 	if err != nil {
 		return nil, err
 	}
 	query := req.URL.Query()
 	query.Add("address", address)
 	req.URL.RawQuery = query.Encode()
+	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

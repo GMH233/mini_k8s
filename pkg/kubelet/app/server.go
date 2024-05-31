@@ -20,13 +20,15 @@ type KubeletServer struct {
 	nodeName        string
 	latestLocalPods []*v1.Pod
 	updates         chan types.PodUpdate
+	nodeConfig      *v1.Node
 }
 
-func NewKubeletServer(apiServerIP string) (*KubeletServer, error) {
+func NewKubeletServer(apiServerIP string, node *v1.Node) (*KubeletServer, error) {
 	ks := &KubeletServer{}
 	ks.kubeClient = client.NewKubeletClient(apiServerIP)
 	ks.latestLocalPods = make([]*v1.Pod, 0)
 	ks.updates = make(chan types.PodUpdate)
+	ks.nodeConfig = node
 	return ks, nil
 }
 
@@ -37,7 +39,7 @@ func (kls *KubeletServer) Run() {
 	if err != nil {
 		log.Fatalf("Failed to get host ip: %v", err)
 	}
-	node, err := kls.kubeClient.RegisterNode(address)
+	node, err := kls.kubeClient.RegisterNode(address, kls.nodeConfig)
 	if err != nil {
 		log.Fatalf("Failed to register node: %v", err)
 	}
