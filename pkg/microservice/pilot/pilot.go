@@ -150,6 +150,7 @@ func (p *pilot) rollingUpdateWorkerLoop(rollingUpdate *v1.RollingUpdate, service
 		return
 	}
 	for i := 0; i < len(pods); i += updateNum {
+		log.Printf("rolling update: %d-%d", i, i+updateNum)
 		j := i + updateNum
 		if j > len(pods) {
 			j = len(pods)
@@ -158,17 +159,13 @@ func (p *pilot) rollingUpdateWorkerLoop(rollingUpdate *v1.RollingUpdate, service
 		availablePodNames := make([]string, 0)
 		for k := 0; k < len(pods); k++ {
 			if k >= i && k < j {
+				log.Printf("blocked pod: %s", pods[k].Name)
 				blockedPodNames = append(blockedPodNames, pods[k].Name)
 			} else {
+				log.Printf("available pod: %s", pods[k].Name)
 				availablePodNames = append(availablePodNames, pods[k].Name)
 			}
 		}
-		//for _, blockedPodName := range blockedPodNames {
-		//	err = p.client.DeletePod(blockedPodName, rollingUpdate.Namespace)
-		//	if err != nil {
-		//		log.Printf("delete pod failed: %v", err)
-		//	}
-		//}
 		subsetBlocked.Spec.Pods = blockedPodNames
 		subsetAvailable.Spec.Pods = availablePodNames
 		err = p.client.AddSubset(subsetBlocked)
@@ -179,14 +176,20 @@ func (p *pilot) rollingUpdateWorkerLoop(rollingUpdate *v1.RollingUpdate, service
 		if err != nil {
 			log.Printf("update available subset failed: %v", err)
 		}
+		for _, blockedPodName := range blockedPodNames {
+			err = p.client.DeletePod(blockedPodName, rollingUpdate.Namespace)
+			if err != nil {
+				log.Printf("delete pod failed: %v", err)
+			}
+		}
 		time.Sleep(time.Duration(rollingUpdate.Spec.Interval) * time.Second)
-		//blockedPods := pods[i:j]
-		//for _, blockedPod := range blockedPods {
-		//	err = p.client.AddPod(*blockedPod)
-		//	if err != nil {
-		//		log.Printf("create pod failed: %v", err)
-		//	}
-		//}
+		blockedPods := pods[i:j]
+		for _, blockedPod := range blockedPods {
+			err = p.client.AddPod(*blockedPod)
+			if err != nil {
+				log.Printf("create pod failed: %v", err)
+			}
+		}
 	}
 	rollingUpdate.Status.Phase = v1.RollingUpdateFinished
 	err = p.client.UpdateRollingUpdateStatus(rollingUpdate.Name, rollingUpdate.Namespace, &rollingUpdate.Status)

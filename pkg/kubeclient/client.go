@@ -516,7 +516,7 @@ func (c *client) AddSubset(subset *v1.Subset) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("add subset error: %v", resp.Status)
 	}
 	return nil
@@ -535,7 +535,7 @@ func (c *client) AddVirtualService(virtualService *v1.VirtualService) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("add virtual service error: %v", resp.Status)
 	}
 	return nil

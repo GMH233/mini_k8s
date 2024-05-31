@@ -247,6 +247,7 @@ func (ser *kubeApiServer) binder() {
 	ser.router.GET(AllRollingUpdateURL, ser.GetAllRollingUpdatesHandler)
 	ser.router.POST(NamespaceRollingUpdateURL, ser.AddRollingUpdateHandler)
 	ser.router.POST(SingleRollingUpdateURL, ser.UpdateRollingUpdateStatusHandler)
+	ser.router.DELETE(SingleRollingUpdateURL, ser.DeleteRollingUpdateHandler)
 }
 
 func (s *kubeApiServer) GetStatsDataHandler(c *gin.Context) {
@@ -2795,6 +2796,7 @@ func (s *kubeApiServer) AddRollingUpdateHandler(c *gin.Context) {
 	ru.Namespace = namespace
 	ru.CreationTimestamp = timestamp.NewTimestamp()
 	ru.UID = v1.UID(uuid.NewUUID())
+	ru.Status.Phase = v1.RollingUpdatePending
 	allKey := fmt.Sprintf("/registry/rollingupdates/%s", ru.UID)
 	ruJson, _ := json.Marshal(ru)
 	err = s.store_cli.Set(allKey, string(ruJson))
@@ -2893,5 +2895,47 @@ func (s *kubeApiServer) UpdateRollingUpdateStatusHandler(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v1.BaseResponse[*v1.RollingUpdateStatus]{
 		Data: &ruStatus,
+	})
+}
+
+func (s *kubeApiServer) DeleteRollingUpdateHandler(c *gin.Context) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	namespace := c.Param("namespace")
+	ruName := c.Param("rollingupdatename")
+	if namespace == "" || ruName == "" {
+		c.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "namespace and rolling update name cannot be empty",
+		})
+		return
+	}
+	namespaceKey := fmt.Sprintf("/registry/namespaces/%s/rollingupdates/%s", namespace, ruName)
+	uid, err := s.store_cli.Get(namespaceKey)
+	if err != nil || uid == "" {
+		c.JSON(http.StatusNotFound, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: fmt.Sprintf("rolling update %s/%s not found", namespace, ruName),
+		})
+		return
+	}
+	allKey := fmt.Sprintf("/registry/rollingupdates/%s", uid)
+	ruJson, _ := s.store_cli.Get(allKey)
+	var ru v1.RollingUpdate
+	_ = json.Unmarshal([]byte(ruJson), &ru)
+	err = s.store_cli.Delete(namespaceKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "error in deleting rolling update from etcd",
+		})
+		return
+	}
+	err = s.store_cli.Delete(allKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, v1.BaseResponse[*v1.RollingUpdate]{
+			Error: "error in deleting rolling update from etcd",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, v1.BaseResponse[*v1.RollingUpdate]{
+		Data: &ru,
 	})
 }
