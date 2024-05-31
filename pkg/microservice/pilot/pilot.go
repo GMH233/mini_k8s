@@ -250,6 +250,13 @@ func (p *pilot) syncLoopIteration() error {
 
 		markedMap[p.getFullPort(serviceUID, vs.Spec.Port)] = true
 		var sidecarEndpoints []v1.SidecarEndpoints
+		var targetPort int32
+		for _, port := range serviceAndEndpointIncludingPodName.Service.Spec.Ports {
+			if port.Port == vs.Spec.Port {
+				targetPort = port.TargetPort
+				break
+			}
+		}
 		if vs.Spec.Subsets[0].URL != nil {
 
 			for _, sbs := range vs.Spec.Subsets {
@@ -264,6 +271,9 @@ func (p *pilot) syncLoopIteration() error {
 					var singleEndPoints []v1.SingleEndpoint
 					endpoints := serviceAndEndpointIncludingPodName.EndpointsMapWithPodName[podName]
 					for _, endpoint := range endpoints.Ports {
+						if endpoint.Port != targetPort {
+							continue
+						}
 						singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
 							IP:         endpoints.IP,
 							TargetPort: endpoint.Port,
@@ -305,6 +315,9 @@ func (p *pilot) syncLoopIteration() error {
 					endpoints := serviceAndEndpointIncludingPodName.EndpointsMapWithPodName[podName]
 					var singleEndPoints []v1.SingleEndpoint
 					for _, endpoint := range endpoints.Ports {
+						if endpoint.Port != targetPort {
+							continue
+						}
 						singleEndPoints = append(singleEndPoints, v1.SingleEndpoint{
 							IP:         endpoints.IP,
 							TargetPort: endpoint.Port,
@@ -338,9 +351,9 @@ func (p *pilot) syncLoopIteration() error {
 	}
 	newMap := make(map[string]*v1.ServiceAndEndpoints)
 	for uid, portSs := range waitedServiceUidAndPorts {
-		endpointsWithPodName := make(map[string]v1.Endpoint)
 		service := endpointMap[uid].Service
 		for _, port_i := range portSs {
+			endpointsWithPodName := make(map[string]v1.Endpoint)
 			var port v1.ServicePort
 			for _, portt := range service.Spec.Ports {
 				if port_i == portt.Port {
