@@ -40,6 +40,19 @@ type Client interface {
 	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
 
 	GetSidecarMapping() (v1.SidecarMapping, error)
+	GetAllVirtualServices() ([]*v1.VirtualService, error)
+	GetSubsetByName(name, namespace string) (*v1.Subset, error)
+
+	AddSidecarMapping(maps v1.SidecarMapping) error
+
+	GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error)
+
+	GetAllRollingUpdates() ([]*v1.RollingUpdate, error)
+	UpdateRollingUpdateStatus(name, namespace string, status *v1.RollingUpdateStatus) error
+	AddSubset(subset *v1.Subset) error
+	AddVirtualService(virtualService *v1.VirtualService) error
+	DeleteSubset(subset *v1.Subset) error
+	DeleteVirtualService(virtualService *v1.VirtualService) error
 }
 
 type client struct {
@@ -477,7 +490,7 @@ func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {
 
 	metricsStr, _ := json.Marshal(metrics)
 
-	fmt.Printf("upload metrics str: %s\n", string(metricsStr))
+	// fmt.Printf("upload metrics str: %s\n", string(metricsStr))
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(metricsStr))
 	if err != nil {
@@ -544,4 +557,197 @@ func (c *client) GetSidecarMapping() (v1.SidecarMapping, error) {
 		return v1.SidecarMapping{}, fmt.Errorf("get sidecar mapping failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
+}
+
+func (c *client) GetAllVirtualServices() ([]*v1.VirtualService, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/virtualservices", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.VirtualService]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get virtual services failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetSubsetByName(name, namespace string) (*v1.Subset, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/subsets/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.Subset]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get virtual services failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) AddSidecarMapping(maps v1.SidecarMapping) error {
+	jsonBytes, err := json.Marshal(&maps)
+	if err != nil {
+		return err
+	}
+	// POST to API server
+	url := fmt.Sprintf("http://%s:8001/api/v1/sidecar-mapping", c.apiServerIP)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/sidecar-service-name-mapping", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[v1.SidecarServiceNameMapping]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get sidecar service name mapping failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetAllRollingUpdates() ([]*v1.RollingUpdate, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/rollingupdates", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.RollingUpdate]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get rolling updates failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) UpdateRollingUpdateStatus(name, namespace string, status *v1.RollingUpdateStatus) error {
+	statusJson, _ := json.Marshal(status)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/rollingupdates/%s", c.apiServerIP, namespace, name), bytes.NewBuffer(statusJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update rolling update status error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) AddSubset(subset *v1.Subset) error {
+	subsetJson, _ := json.Marshal(subset)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/subsets", c.apiServerIP, subset.Namespace), bytes.NewBuffer(subsetJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add subset error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) AddVirtualService(virtualService *v1.VirtualService) error {
+	vsJson, _ := json.Marshal(virtualService)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/virtualservices", c.apiServerIP, virtualService.Namespace), bytes.NewBuffer(vsJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add virtual service error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) DeleteSubset(subset *v1.Subset) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/subsets/%s", c.apiServerIP, subset.Namespace, subset.Name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete subset error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) DeleteVirtualService(virtualService *v1.VirtualService) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/virtualservices/%s", c.apiServerIP, virtualService.Namespace, virtualService.Name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete virtual service error: %v", resp.Status)
+	}
+	return nil
 }
