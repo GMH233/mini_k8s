@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"minikubernetes/pkg/kubeclient"
 	"os"
+	"strings"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -39,6 +40,9 @@ var getCommand = &cobra.Command{
 			}
 			if args[0] == "subsets" {
 				getAllSubsets()
+			}
+			if args[0] == "dns" {
+				getAllDNS()
 			}
 		}
 	},
@@ -87,14 +91,14 @@ func getAllServices() {
 	table.Render()
 
 	ipDetailsTable := tablewriter.NewWriter(os.Stdout)
-	ipDetailsTable.SetHeader([]string{"Name/Service", "ClusterIP", "Port", "Endpoint", "Protocol"})
+	ipDetailsTable.SetHeader([]string{"Name/Service", "ClusterIP", "Port", "NodePort", "Endpoint", "Protocol"})
 	// todo 显示service的port和endpoint
 	for _, service := range services {
 		ip := service.Spec.ClusterIP
 
 		for _, svcPort := range service.Spec.Ports {
-			sideCarMpKey := fmt.Sprintf("%v:%v", ip, svcPort)
 
+			sideCarMpKey := fmt.Sprintf("%v:%v", ip, svcPort.Port)
 			allSidecarMap, err := kubeclient.NewClient(apiServerIP).GetSidecarMapping()
 			if err != nil {
 				fmt.Println(err)
@@ -104,16 +108,26 @@ func getAllServices() {
 				var epFmtStr string
 				for _, sidecarEP := range sidecarEPList {
 					for _, singleEP := range sidecarEP.Endpoints {
-						epFmtStr += fmt.Sprintf("%v:%v\n,", singleEP.IP, singleEP.TargetPort)
+						epFmtStr += fmt.Sprintf("%v:%v\n", singleEP.IP, singleEP.TargetPort)
 					}
 				}
-				ipDetailsTable.Append([]string{service.Name, ip, fmt.Sprint(svcPort.Port), epFmtStr, fmt.Sprint(svcPort.Protocol)})
+				epFmtStr = strings.TrimSpace(epFmtStr)
+				if service.Spec.Type == "NodePort" {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), fmt.Sprint(svcPort.NodePort), epFmtStr, fmt.Sprint(svcPort.Protocol)})
+				} else {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", epFmtStr, fmt.Sprint(svcPort.Protocol)})
+				}
 			} else {
-				ipDetailsTable.Append([]string{service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", fmt.Sprint(svcPort.Protocol)})
+				if service.Spec.Type == "NodePort" {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), fmt.Sprint(svcPort.NodePort), "N/A", fmt.Sprint(svcPort.Protocol)})
+				} else {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", "N/A", fmt.Sprint(svcPort.Protocol)})
+				}
 			}
 
 		}
 	}
+	ipDetailsTable.Render()
 
 }
 func getAllHPAScalers() {
@@ -155,9 +169,61 @@ func getAllReplicaSets() {
 }
 
 func getAllVirtualServices() {
+	virtualservices, err := kubeclient.NewClient(apiServerIP).GetAllVirtualServices()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "ServiceRef", "Port", "Subsets"})
+	for _, virtualservice := range virtualservices {
+		subsetsFmtStr := ""
+		for _, subset := range virtualservice.Spec.Subsets {
+			subsetsFmtStr += fmt.Sprintf("%v\n", subset)
+		}
 
+		table.Append([]string{"virtualservice", virtualservice.Namespace, virtualservice.Name, virtualservice.Spec.ServiceRef, fmt.Sprint(virtualservice.Spec.Port), subsetsFmtStr})
+	}
+	table.Render()
 }
 
 func getAllSubsets() {
+	subsets, err := kubeclient.NewClient(apiServerIP).GetAllSubsets()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "Labels", "Pods"})
+	for _, subset := range subsets {
+		podFmtStr := ""
+		for _, pod := range subset.Spec.Pods {
+			podFmtStr += fmt.Sprintf("%v\n", pod)
+		}
+		labelsFmtStr := ""
+		for k, v := range subset.Labels {
+			labelsFmtStr += fmt.Sprintf("%v:%v\n", k, v)
+		}
+		table.Append([]string{"subset", subset.Namespace, subset.Name, labelsFmtStr, podFmtStr})
+	}
+	table.Render()
+}
 
+func getAllDNS() {
+	// dns, err := kubeclient.NewClient(apiServerIP).GetAllDNS()
+	// if err != nil {
+	// 	fmt.Println(err)
+	// 	return
+	// }
+	// table := tablewriter.NewWriter(os.Stdout)
+	// table.SetHeader([]string{"Kind", "Name", "Namespace", "IP"})
+	// for _, dn := range dns {
+	// 	table.Append([]string{"dns", dn.Name, dn.Namespace, dn.Spec.IP})
+	// }
+	// table.Render()
+}
+
+// TODO 展示rolling update
+func getAllRollingUpdate() {
+	//
 }

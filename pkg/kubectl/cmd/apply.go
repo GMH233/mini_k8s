@@ -101,7 +101,7 @@ func apply(filename string) {
 			fmt.Println(err)
 			return
 		}
-		applyVirtualService(virtualServiceGenerated)
+		applyVirtualService(&virtualServiceGenerated)
 		fmt.Println("VirtualService Applied")
 
 	case "Subset":
@@ -112,9 +112,19 @@ func apply(filename string) {
 			fmt.Println(err)
 			return
 		}
-		applySubset(subsetGenerated)
+		applySubset(&subsetGenerated)
 		fmt.Println("Subset Applied")
 
+	case "DNS":
+		fmt.Println("Apply DNS")
+		var dnsGenerated v1.DNS
+		err := json.Unmarshal(jsonBytes, &dnsGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyDNS(dnsGenerated)
+		fmt.Println("DNS Applied")
 	}
 
 }
@@ -149,17 +159,30 @@ func applyHPAScaler(hpa v1.HorizontalPodAutoscaler) {
 	}
 }
 
-func applyVirtualService(virtualService v1.VirtualService) {
-	// err := kubeclient.NewClient(apiServerIP).AddVirtualService(virtualService)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
+func applyVirtualService(virtualService *v1.VirtualService) {
+	err := kubeclient.NewClient(apiServerIP).AddVirtualService(virtualService)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 }
-func applySubset(subset v1.Subset) {
-	// err := kubeclient.NewClient(apiServerIP).AddSubset(subset)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
+func applySubset(subset *v1.Subset) {
+	err := kubeclient.NewClient(apiServerIP).AddSubset(subset)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 }
+
+func applyDNS(dns v1.DNS) {
+	err := kubeclient.NewClient(apiServerIP).AddDNS(dns)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+// TODO 增加rolling update的部署
+// func applyRolingUpdate() {
+// 	fmt.Println("Apply Rolling Update")
+// }

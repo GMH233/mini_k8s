@@ -1,7 +1,7 @@
 kind: Service
 apiVersion: v1
 metadata:
-  name: nginx-service-2
+  name: nginx-service
 
 spec:
   type: NodePort

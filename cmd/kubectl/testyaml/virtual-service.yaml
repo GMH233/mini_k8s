@@ -2,9 +2,10 @@ apiVersion: v1
 kind: VirtualService
 metadata:
   name: nginx-vs
+  namespace: default
 spec:
   serviceRef: nginx-service
-  port: 802
+  port: 800
   subsets:
     - name: nginx-v1
       weight: 1
