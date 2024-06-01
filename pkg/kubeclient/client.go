@@ -11,19 +11,31 @@ import (
 )
 
 type Client interface {
-	GetAllServices() ([]*v1.Service, error)
 	GetAllPods() ([]*v1.Pod, error)
-	GetAllDNS() ([]*v1.DNS, error)
 	AddPod(pod v1.Pod) error
 	DeletePod(name, namespace string) error
-	GetAllReplicaSets() ([]*v1.ReplicaSet, error)
+
 	GetAllUnscheduledPods() ([]*v1.Pod, error)
+
+	GetAllDNS() ([]*v1.DNS, error)
+
 	GetAllNodes() ([]*v1.Node, error)
 	AddPodToNode(pod v1.Pod, node v1.Node) error
 
-	// GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error)
+	GetAllServices() ([]*v1.Service, error)
+	AddService(service v1.Service) error
+	DeleteService(name, namespace string) error
+
+	GetAllReplicaSets() ([]*v1.ReplicaSet, error)
+	GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error)
+	AddReplicaSet(replicaSet v1.ReplicaSet) error
+	DeleteReplicaSet(name, namespace string) error
 	UpdateReplicaSet(name, namespace string, repNum int32) error
+
 	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
+	AddHPAScaler(hpa v1.HorizontalPodAutoscaler) error
+	DeleteHPAScaler(name, namespace string) error
+
 	UploadPodMetrics(metrics []*v1.PodRawMetrics) error
 	GetPodMetrics(v1.MetricsQuery) (*v1.PodRawMetrics, error)
 
@@ -53,28 +65,6 @@ func NewClient(apiServerIP string) Client {
 	}
 }
 
-func (c *client) GetAllServices() ([]*v1.Service, error) {
-	url := fmt.Sprintf("http://%s:8001/api/v1/services", c.apiServerIP)
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	var baseResponse v1.BaseResponse[[]*v1.Service]
-	err = json.Unmarshal(body, &baseResponse)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get services failed, error: %s", baseResponse.Error)
-	}
-	return baseResponse.Data, nil
-}
-
 func (c *client) GetAllPods() ([]*v1.Pod, error) {
 	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/pods", c.apiServerIP))
 	if err != nil {
@@ -92,48 +82,6 @@ func (c *client) GetAllPods() ([]*v1.Pod, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
-	}
-	return baseResponse.Data, nil
-}
-
-func (c *client) GetAllDNS() ([]*v1.DNS, error) {
-	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/dns", c.apiServerIP))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	var baseResponse v1.BaseResponse[[]*v1.DNS]
-	err = json.Unmarshal(body, &baseResponse)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get dns failed, error: %s", baseResponse.Error)
-	}
-	return baseResponse.Data, nil
-}
-
-func (c *client) GetAllReplicaSets() ([]*v1.ReplicaSet, error) {
-	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/replicasets", c.apiServerIP))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	var baseResponse v1.BaseResponse[[]*v1.ReplicaSet]
-	err = json.Unmarshal(body, &baseResponse)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get replica sets failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
 }
@@ -166,6 +114,7 @@ func (c *client) AddPod(pod v1.Pod) error {
 	}
 	return nil
 }
+
 func (c *client) DeletePod(name, namespace string) error {
 	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/pods/%s", c.apiServerIP, namespace, name), nil)
 	if err != nil {
@@ -202,6 +151,26 @@ func (c *client) GetAllUnscheduledPods() ([]*v1.Pod, error) {
 	return baseResponse.Data, nil
 }
 
+func (c *client) GetAllDNS() ([]*v1.DNS, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/dns", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.DNS]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get dns failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
 func (c *client) GetAllNodes() ([]*v1.Node, error) {
 	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/nodes", c.apiServerIP))
 	if err != nil {
@@ -238,28 +207,184 @@ func (c *client) AddPodToNode(pod v1.Pod, node v1.Node) error {
 	return nil
 }
 
-// 可能没用到
-// func (c *client) GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error) {
-// 	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name))
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	defer resp.Body.Close()
-// 	body, err := io.ReadAll(resp.Body)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func (c *client) GetAllServices() ([]*v1.Service, error) {
+	url := fmt.Sprintf("http://%s:8001/api/v1/services", c.apiServerIP)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.Service]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get services failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
 
-// 	var baseResponse v1.BaseResponse[v1.ReplicaSet]
-// 	err = json.Unmarshal(body, &baseResponse)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	if resp.StatusCode != http.StatusOK {
-// 		return nil, fmt.Errorf("get replica set error: %v", baseResponse.Error)
-// 	}
-// 	return &baseResponse.Data, nil
-// }
+func (c *client) AddService(service v1.Service) error {
+	if service.Namespace == "" {
+		service.Namespace = "default"
+	}
+
+	serviceJson, err := json.Marshal(service)
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/services", c.apiServerIP, service.Namespace), bytes.NewBuffer(serviceJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.Service]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add service error: %v", baseResponse.Error)
+	}
+	return nil
+}
+func (c *client) DeleteService(name, namespace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/services/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.Service]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete service error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) GetAllReplicaSets() ([]*v1.ReplicaSet, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/replicasets", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.ReplicaSet]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get replica sets failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetReplicaSet(name, namespace string) (*v1.ReplicaSet, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var baseResponse v1.BaseResponse[v1.ReplicaSet]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get replica set error: %v", baseResponse.Error)
+	}
+	return &baseResponse.Data, nil
+}
+
+func (c *client) AddReplicaSet(replicaSet v1.ReplicaSet) error {
+	if replicaSet.Namespace == "" {
+		replicaSet.Namespace = "default"
+	}
+
+	replicaSetJson, _ := json.Marshal(replicaSet)
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets", c.apiServerIP, replicaSet.Namespace), bytes.NewBuffer(replicaSetJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.Service]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add replica set error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) DeleteReplicaSet(name, namespace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.ReplicaSet]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete replica set error: %v", baseResponse.Error)
+	}
+	return nil
+}
 
 func (c *client) UpdateReplicaSet(name, namespace string, repNum int32) error {
 	req, err := http.NewRequest("PUT", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/replicasets/%s", c.apiServerIP, namespace, name), nil)
@@ -302,6 +427,62 @@ func (c *client) GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error) {
 		return nil, fmt.Errorf("get hpa scalers failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
+}
+
+func (c *client) AddHPAScaler(hpa v1.HorizontalPodAutoscaler) error {
+	if hpa.Namespace == "" {
+		hpa.Namespace = "default"
+	}
+
+	hpaJson, _ := json.Marshal(hpa)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/scaling", c.apiServerIP, hpa.Namespace), bytes.NewBuffer(hpaJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.Service]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add hpa scaler error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) DeleteHPAScaler(name, namespace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/scaling/scalingname/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.HorizontalPodAutoscaler]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete hpa scaler error: %v", baseResponse.Error)
+	}
+	return nil
 }
 
 func (c *client) UploadPodMetrics(metrics []*v1.PodRawMetrics) error {

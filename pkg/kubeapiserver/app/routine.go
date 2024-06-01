@@ -550,7 +550,6 @@ func (ser *kubeApiServer) GetPodsByNamespaceHandler(con *gin.Context) {
 
 	np := con.Params.ByName("namespace")
 	if np == "" {
-		//log.Panicln("error in parsing namespace ")
 		con.JSON(http.StatusNotFound, gin.H{
 			"error": "error in parsing namespace ",
 		})
@@ -670,7 +669,7 @@ func (ser *kubeApiServer) AddPodHandler(con *gin.Context) {
 	var pod v1.Pod
 	err := con.ShouldBind(&pod)
 	if err != nil {
-		log.Panicln("something is wrong when parsing Pod")
+		log.Println("something is wrong when parsing Pod")
 		return
 	}
 	pod_name := pod.ObjectMeta.Name
@@ -929,7 +928,7 @@ func (ser *kubeApiServer) PutPodStatusHandler(con *gin.Context) {
 	var pod_status v1.PodStatus
 	err := con.ShouldBind(&pod_status)
 	if err != nil {
-		log.Panicln("something is wrong when parsing Pod")
+		log.Println("something is wrong when parsing Pod")
 		return
 	}
 
@@ -1003,7 +1002,6 @@ func (ser *kubeApiServer) GetPodsByNodeHandler(con *gin.Context) {
 
 	node_name := con.Params.ByName("nodename")
 	if node_name == "" {
-		//log.Panicln("error in parsing nodename ")
 		con.JSON(http.StatusNotFound, gin.H{
 			"error": "error in parsing nodename ",
 		})
@@ -2057,7 +2055,7 @@ func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
 	var rps v1.ReplicaSet
 	err := con.ShouldBind(&rps)
 	if err != nil {
-		log.Panicln("something is wrong when parsing replica set")
+		log.Println("something is wrong when parsing replica set")
 		return
 	}
 	rps_name := rps.ObjectMeta.Name
@@ -2065,6 +2063,7 @@ func (ser *kubeApiServer) AddReplicaSetHandler(con *gin.Context) {
 		rps_name = Default_Podname
 	}
 
+	log.Print("replica set selector: ", rps.Spec.Selector)
 	rps_label := rps.Spec.Selector.MatchLabels
 	if rps_label == nil {
 		con.JSON(http.StatusBadRequest, v1.BaseResponse[*v1.ReplicaSet]{
