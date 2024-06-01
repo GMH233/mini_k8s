@@ -20,25 +20,25 @@ var getCommand = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 1 {
-			if args[0] == "pods" {
+			if args[0] == "pods" || args[0] == "pod" {
 				getAllPods()
 			}
-			if args[0] == "nodes" {
+			if args[0] == "nodes" || args[0] == "node" {
 				getAllNodes()
 			}
-			if args[0] == "services" {
+			if args[0] == "services" || args[0] == "service" {
 				getAllServices()
 			}
-			if args[0] == "hpas" {
+			if args[0] == "hpas" || args[0] == "hpa" {
 				getAllHPAScalers()
 			}
-			if args[0] == "replicasets" {
+			if args[0] == "replicasets" || args[0] == "replicaset" {
 				getAllReplicaSets()
 			}
-			if args[0] == "virtualservices" {
+			if args[0] == "virtualservices" || args[0] == "virtualservice" {
 				getAllVirtualServices()
 			}
-			if args[0] == "subsets" {
+			if args[0] == "subsets" || args[0] == "subset" {
 				getAllSubsets()
 			}
 			if args[0] == "dns" {
@@ -208,17 +208,29 @@ func getAllSubsets() {
 }
 
 func getAllDNS() {
-	// dns, err := kubeclient.NewClient(apiServerIP).GetAllDNS()
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
-	// table := tablewriter.NewWriter(os.Stdout)
-	// table.SetHeader([]string{"Kind", "Name", "Namespace", "IP"})
-	// for _, dn := range dns {
-	// 	table.Append([]string{"dns", dn.Name, dn.Namespace, dn.Spec.IP})
-	// }
-	// table.Render()
+	dns, err := kubeclient.NewClient(apiServerIP).GetAllDNS()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "Rules"})
+	for _, dn := range dns {
+		hostPath2NamePortStr := ""
+		for _, rule := range dn.Spec.Rules {
+			host := rule.Host
+			for _, dnsPath := range rule.Paths {
+				hostPath2NamePortStr += fmt.Sprintf("%v%v\n --> %v:%v\n", host, dnsPath.Path, dnsPath.Backend.Service.Name, dnsPath.Backend.Service.Port)
+			}
+		}
+		if hostPath2NamePortStr != "" {
+			hostPath2NamePortStr = strings.TrimSpace(hostPath2NamePortStr)
+			table.Append([]string{"dns", dn.Namespace, dn.Name, hostPath2NamePortStr})
+		} else {
+			table.Append([]string{"dns", dn.Namespace, dn.Name, "N/A"})
+		}
+	}
+	table.Render()
 }
 
 // TODO 展示rolling update
