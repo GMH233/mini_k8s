@@ -497,10 +497,11 @@ type RollingUpdate struct {
 }
 
 type RollingUpdateSpec struct {
-	ServiceRef   string `json:"serviceRef,omitempty"`
-	Port         int32  `json:"port,omitempty"`
-	MinimumAlive int32  `json:"minimumAlive,omitempty"`
-	Interval     int32  `json:"interval,omitempty"`
+	ServiceRef   string  `json:"serviceRef,omitempty"`
+	Port         int32   `json:"port,omitempty"`
+	MinimumAlive int32   `json:"minimumAlive,omitempty"`
+	Interval     int32   `json:"interval,omitempty"`
+	NewPodSpec   PodSpec `json:"newPodSpec,omitempty"`
 }
 
 type RollingUpdatePhase string

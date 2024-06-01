@@ -1,0 +1,24 @@
+kind: ReplicaSet
+apiVersion: v1
+metadata:
+  name: nginx-replicaset
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      name: nginx-pod
+      namespace: default
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: container
+          image: python:latest
+          command: ["python", "-m", "http.server", "1024"]
+          ports:
+            - containerPort: 1024
+              protocol: tcp
