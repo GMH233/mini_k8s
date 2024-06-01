@@ -46,8 +46,13 @@ var deleteCommand = &cobra.Command{
 				deleteReplicaSet(args[1], "default")
 			case "virtualservice":
 				deleteVirtualService(args[1], "default")
-			case "subsets":
+			case "subset":
 				deleteSubset(args[1], "default")
+			case "dns":
+				deleteDNS(args[1], "default")
+			case "rollingupdate":
+				deleteRollingUpdate(args[1], "default")
+
 			}
 		} else if len(args) == 1 {
 			// 指定namespace和name
@@ -73,6 +78,10 @@ var deleteCommand = &cobra.Command{
 				deleteVirtualService(name, namespace)
 			case "subsets":
 				deleteSubset(name, namespace)
+			case "dns":
+				deleteDNS(name, namespace)
+			case "rollingupdate":
+				deleteRollingUpdate(name, namespace)
 			}
 
 		} else {
@@ -175,6 +184,75 @@ func deleteFromYAML(filename string) {
 		deleteHPA(hpaGenerated.Name, hpaGenerated.Namespace)
 		fmt.Println("HorizontalPodAutoscaler Deleted")
 
+	case "VirtualService":
+		fmt.Println("Delete VirtualService")
+		var virtualServiceGenerated v1.VirtualService
+		err := json.Unmarshal(jsonBytes, &virtualServiceGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if virtualServiceGenerated.Name == "" {
+			fmt.Println("VirtualService name not found")
+			return
+		}
+		if virtualServiceGenerated.Namespace == "" {
+			virtualServiceGenerated.Namespace = "default"
+		}
+		deleteVirtualService(virtualServiceGenerated.Name, virtualServiceGenerated.Namespace)
+		fmt.Println("VirtualService Deleted")
+
+	case "Subset":
+		fmt.Println("Delete Subset")
+		var subsetGenerated v1.Subset
+		err := json.Unmarshal(jsonBytes, &subsetGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if subsetGenerated.Name == "" {
+			fmt.Println("Subset name not found")
+			return
+		}
+		if subsetGenerated.Namespace == "" {
+			subsetGenerated.Namespace = "default"
+		}
+		deleteSubset(subsetGenerated.Name, subsetGenerated.Namespace)
+		fmt.Println("Subset Deleted")
+	case "DNS":
+		fmt.Println("Delete DNS")
+		var dnsGenerated v1.DNS
+		err := json.Unmarshal(jsonBytes, &dnsGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if dnsGenerated.Name == "" {
+			fmt.Println("DNS name not found")
+			return
+		}
+		if dnsGenerated.Namespace == "" {
+			dnsGenerated.Namespace = "default"
+		}
+		deleteDNS(dnsGenerated.Name, dnsGenerated.Namespace)
+		fmt.Println("DNS Deleted")
+	case "RollingUpdate":
+		fmt.Println("Delete RollingUpdate")
+		var rollingUpdateGenerated v1.RollingUpdate
+		err := json.Unmarshal(jsonBytes, &rollingUpdateGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if rollingUpdateGenerated.Name == "" {
+			fmt.Println("RollingUpdate name not found")
+			return
+		}
+		if rollingUpdateGenerated.Namespace == "" {
+			rollingUpdateGenerated.Namespace = "default"
+		}
+		deleteRollingUpdate(rollingUpdateGenerated.Name, rollingUpdateGenerated.Namespace)
+		fmt.Println("RollingUpdate Deleted")
 	}
 }
 
@@ -211,17 +289,35 @@ func deleteReplicaSet(replicaSetName, nameSpace string) {
 }
 
 func deleteVirtualService(vsName, nameSpace string) {
-	// err := kubeclient.NewClient(apiServerIP).DeleteVirtualService(vsName, nameSpace)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
+	err := kubeclient.NewClient(apiServerIP).DeleteVirtualServiceByNameNp(vsName, nameSpace)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 }
 
 func deleteSubset(subsetName, nameSpace string) {
-	// err := kubeclient.NewClient(apiServerIP).DeleteSubset(subsetName, nameSpace)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
+	err := kubeclient.NewClient(apiServerIP).DeleteSubsetByNameNp(subsetName, nameSpace)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+func deleteDNS(dnsName, nameSpace string) {
+	err := kubeclient.NewClient(apiServerIP).DeleteDNS(dnsName, nameSpace)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+// TODO: 增加RolliingUpdate的删除
+func deleteRollingUpdate(rollingUpdateName, nameSpace string) {
+	err := kubeclient.NewClient(apiServerIP).DeleteRollingUpdate(rollingUpdateName, nameSpace)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 }

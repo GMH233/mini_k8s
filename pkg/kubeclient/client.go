@@ -12,17 +12,22 @@ import (
 
 type Client interface {
 	GetAllPods() ([]*v1.Pod, error)
+	GetPod(name, namespace string) (*v1.Pod, error)
 	AddPod(pod v1.Pod) error
 	DeletePod(name, namespace string) error
 
 	GetAllUnscheduledPods() ([]*v1.Pod, error)
 
 	GetAllDNS() ([]*v1.DNS, error)
+	GetDNS(name, namespace string) (*v1.DNS, error)
+	AddDNS(dns v1.DNS) error
+	DeleteDNS(name, namespace string) error
 
 	GetAllNodes() ([]*v1.Node, error)
 	AddPodToNode(pod v1.Pod, node v1.Node) error
 
 	GetAllServices() ([]*v1.Service, error)
+	GetService(name, namespace string) (*v1.Service, error)
 	AddService(service v1.Service) error
 	DeleteService(name, namespace string) error
 
@@ -33,6 +38,7 @@ type Client interface {
 	UpdateReplicaSet(name, namespace string, repNum int32) error
 
 	GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error)
+	GetHPAScaler(name, namespace string) (*v1.HorizontalPodAutoscaler, error)
 	AddHPAScaler(hpa v1.HorizontalPodAutoscaler) error
 	DeleteHPAScaler(name, namespace string) error
 
@@ -48,11 +54,19 @@ type Client interface {
 	GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error)
 
 	GetAllRollingUpdates() ([]*v1.RollingUpdate, error)
+	AddRollingUpdate(rollingUpdate *v1.RollingUpdate) error
+	DeleteRollingUpdate(name, namespace string) error
 	UpdateRollingUpdateStatus(name, namespace string, status *v1.RollingUpdateStatus) error
+
+	GetAllSubsets() ([]*v1.Subset, error)
 	AddSubset(subset *v1.Subset) error
-	AddVirtualService(virtualService *v1.VirtualService) error
 	DeleteSubset(subset *v1.Subset) error
+	DeleteSubsetByNameNp(subsetName, nameSpace string) error
+
+	GetVirtualService(name, namespace string) (*v1.VirtualService, error)
+	AddVirtualService(virtualService *v1.VirtualService) error
 	DeleteVirtualService(virtualService *v1.VirtualService) error
+	DeleteVirtualServiceByNameNp(vsName, nameSpace string) error
 }
 
 type client struct {
@@ -82,6 +96,27 @@ func (c *client) GetAllPods() ([]*v1.Pod, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetPod(name, namespace string) (*v1.Pod, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/pods/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.Pod]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pod error: %v", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
 }
@@ -171,6 +206,86 @@ func (c *client) GetAllDNS() ([]*v1.DNS, error) {
 	}
 	return baseResponse.Data, nil
 }
+
+func (c *client) GetDNS(name, namespace string) (*v1.DNS, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/dns/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.DNS]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get dns error: %v", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) AddDNS(dns v1.DNS) error {
+	if dns.Namespace == "" {
+		dns.Namespace = "default"
+	}
+
+	dnsJson, _ := json.Marshal(dns)
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/dns", c.apiServerIP, dns.Namespace), bytes.NewBuffer(dnsJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.DNS]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add dns error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) DeleteDNS(name, namespace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/dns/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	var baseResponse v1.BaseResponse[v1.DNS]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete dns error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
 func (c *client) GetAllNodes() ([]*v1.Node, error) {
 	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/nodes", c.apiServerIP))
 	if err != nil {
@@ -225,6 +340,27 @@ func (c *client) GetAllServices() ([]*v1.Service, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get services failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+
+func (c *client) GetService(name, namespace string) (*v1.Service, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/services/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.Service]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get service error: %v", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
 }
@@ -425,6 +561,26 @@ func (c *client) GetAllHPAScalers() ([]*v1.HorizontalPodAutoscaler, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get hpa scalers failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+}
+func (c *client) GetHPAScaler(name, namespace string) (*v1.HorizontalPodAutoscaler, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/scaling/scalingname/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.HorizontalPodAutoscaler]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get hpa scaler error: %v", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
 }
@@ -665,6 +821,54 @@ func (c *client) GetAllRollingUpdates() ([]*v1.RollingUpdate, error) {
 	return baseResponse.Data, nil
 }
 
+func (c *client) AddRollingUpdate(rollingUpdate *v1.RollingUpdate) error {
+	if rollingUpdate.Namespace == "" {
+		rollingUpdate.Namespace = "default"
+	}
+	rollingUpdateJson, _ := json.Marshal(rollingUpdate)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/rollingupdates", c.apiServerIP, rollingUpdate.Namespace), bytes.NewBuffer(rollingUpdateJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.RollingUpdate]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add rolling update error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) DeleteRollingUpdate(name, namespace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/rollingupdates/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.RollingUpdate]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete rolling update error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
 func (c *client) UpdateRollingUpdateStatus(name, namespace string, status *v1.RollingUpdateStatus) error {
 	statusJson, _ := json.Marshal(status)
 	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/rollingupdates/%s", c.apiServerIP, namespace, name), bytes.NewBuffer(statusJson))
@@ -684,6 +888,28 @@ func (c *client) UpdateRollingUpdateStatus(name, namespace string, status *v1.Ro
 	return nil
 }
 
+func (c *client) GetAllSubsets() ([]*v1.Subset, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/subsets", c.apiServerIP))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.Subset]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get subsets failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
+
+}
+
 func (c *client) AddSubset(subset *v1.Subset) error {
 	subsetJson, _ := json.Marshal(subset)
 	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/subsets", c.apiServerIP, subset.Namespace), bytes.NewBuffer(subsetJson))
@@ -697,10 +923,32 @@ func (c *client) AddSubset(subset *v1.Subset) error {
 		return err
 	}
 	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.Subset]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("add subset error: %v", resp.Status)
+		return fmt.Errorf("add subset error: %v", baseResponse.Error)
 	}
 	return nil
+}
+func (c *client) GetVirtualService(name, namespace string) (*v1.VirtualService, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/virtualservices/%s", c.apiServerIP, namespace, name))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[*v1.VirtualService]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get virtual service error: %v", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
 }
 
 func (c *client) AddVirtualService(virtualService *v1.VirtualService) error {
@@ -716,8 +964,14 @@ func (c *client) AddVirtualService(virtualService *v1.VirtualService) error {
 		return err
 	}
 	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.VirtualService]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
+	if err != nil {
+		return err
+	}
+
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("add virtual service error: %v", resp.Status)
+		return fmt.Errorf("add virtual service error: %v", baseResponse.Error)
 	}
 	return nil
 }
@@ -737,8 +991,38 @@ func (c *client) DeleteSubset(subset *v1.Subset) error {
 	return nil
 }
 
+func (c *client) DeleteSubsetByNameNp(subsetName, nameSpace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/subsets/%s", c.apiServerIP, nameSpace, subsetName), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete subset error: %v", resp.Status)
+	}
+	return nil
+}
+
 func (c *client) DeleteVirtualService(virtualService *v1.VirtualService) error {
 	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/virtualservices/%s", c.apiServerIP, virtualService.Namespace, virtualService.Name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete virtual service error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) DeleteVirtualServiceByNameNp(vsName, nameSpace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/virtualservices/%s", c.apiServerIP, nameSpace, vsName), nil)
 	if err != nil {
 		return err
 	}
