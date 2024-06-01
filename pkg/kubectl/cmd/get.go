@@ -179,8 +179,9 @@ func getAllVirtualServices() {
 	for _, virtualservice := range virtualservices {
 		subsetsFmtStr := ""
 		for _, subset := range virtualservice.Spec.Subsets {
-			subsetsFmtStr += fmt.Sprintf("%v\n", subset)
+			subsetsFmtStr += fmt.Sprintf("%v\n", subset.Name)
 		}
+		subsetsFmtStr = strings.TrimSpace(subsetsFmtStr)
 
 		table.Append([]string{"virtualservice", virtualservice.Namespace, virtualservice.Name, virtualservice.Spec.ServiceRef, fmt.Sprint(virtualservice.Spec.Port), subsetsFmtStr})
 	}
@@ -194,17 +195,14 @@ func getAllSubsets() {
 		return
 	}
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Kind", "Namespace", "Name", "Labels", "Pods"})
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "Pods"})
 	for _, subset := range subsets {
 		podFmtStr := ""
 		for _, pod := range subset.Spec.Pods {
 			podFmtStr += fmt.Sprintf("%v\n", pod)
 		}
-		labelsFmtStr := ""
-		for k, v := range subset.Labels {
-			labelsFmtStr += fmt.Sprintf("%v:%v\n", k, v)
-		}
-		table.Append([]string{"subset", subset.Namespace, subset.Name, labelsFmtStr, podFmtStr})
+		podFmtStr = strings.TrimSpace(podFmtStr)
+		table.Append([]string{"subset", subset.Namespace, subset.Name, podFmtStr})
 	}
 	table.Render()
 }

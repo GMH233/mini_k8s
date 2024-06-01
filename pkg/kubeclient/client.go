@@ -873,8 +873,10 @@ func (c *client) AddSubset(subset *v1.Subset) error {
 		return err
 	}
 	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.Subset]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("add subset error: %v", resp.Status)
+		return fmt.Errorf("add subset error: %v", baseResponse.Error)
 	}
 	return nil
 }
