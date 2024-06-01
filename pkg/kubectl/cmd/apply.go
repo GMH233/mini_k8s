@@ -125,6 +125,17 @@ func apply(filename string) {
 		}
 		applyDNS(dnsGenerated)
 		fmt.Println("DNS Applied")
+	case "RollingUpdate":
+		fmt.Println("Apply Rolling Update")
+		var rollingUpdateGenerated v1.RollingUpdate
+		err := json.Unmarshal(jsonBytes, &rollingUpdateGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyRolingUpdate(&rollingUpdateGenerated)
+		fmt.Println("Rolling Update Applied")
+
 	}
 
 }
@@ -183,6 +194,11 @@ func applyDNS(dns v1.DNS) {
 }
 
 // TODO 增加rolling update的部署
-// func applyRolingUpdate() {
-// 	fmt.Println("Apply Rolling Update")
-// }
+func applyRolingUpdate(rol *v1.RollingUpdate) {
+	err := kubeclient.NewClient(apiServerIP).AddRollingUpdate(rol)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+}

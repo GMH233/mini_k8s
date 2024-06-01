@@ -44,6 +44,10 @@ var getCommand = &cobra.Command{
 			if args[0] == "dns" {
 				getAllDNS()
 			}
+			if args[0] == "rollingupdates" || args[0] == "rollingupdate" {
+				getAllRollingUpdate()
+			}
+
 		}
 	},
 }
@@ -235,5 +239,16 @@ func getAllDNS() {
 
 // TODO 展示rolling update
 func getAllRollingUpdate() {
-	//
+	rollingUpdates, err := kubeclient.NewClient(apiServerIP).GetAllRollingUpdates()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "Status", "ServiceRef", "Port", "MinimumAlive", "Interval"})
+	for _, rollingUpdate := range rollingUpdates {
+		table.Append([]string{"rollingupdate", rollingUpdate.Namespace, rollingUpdate.Name, string(rollingUpdate.Status.Phase), rollingUpdate.Spec.ServiceRef, fmt.Sprint(rollingUpdate.Spec.Port), fmt.Sprint(rollingUpdate.Spec.MinimumAlive), fmt.Sprint(rollingUpdate.Spec.Interval)})
+	}
+	table.Render()
+
 }

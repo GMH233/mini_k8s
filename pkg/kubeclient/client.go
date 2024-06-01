@@ -54,6 +54,8 @@ type Client interface {
 	GetSidecarServiceNameMapping() (v1.SidecarServiceNameMapping, error)
 
 	GetAllRollingUpdates() ([]*v1.RollingUpdate, error)
+	AddRollingUpdate(rollingUpdate *v1.RollingUpdate) error
+	DeleteRollingUpdate(name, namespace string) error
 	UpdateRollingUpdateStatus(name, namespace string, status *v1.RollingUpdateStatus) error
 
 	GetAllSubsets() ([]*v1.Subset, error)
@@ -817,6 +819,54 @@ func (c *client) GetAllRollingUpdates() ([]*v1.RollingUpdate, error) {
 		return nil, fmt.Errorf("get rolling updates failed, error: %s", baseResponse.Error)
 	}
 	return baseResponse.Data, nil
+}
+
+func (c *client) AddRollingUpdate(rollingUpdate *v1.RollingUpdate) error {
+	if rollingUpdate.Namespace == "" {
+		rollingUpdate.Namespace = "default"
+	}
+	rollingUpdateJson, _ := json.Marshal(rollingUpdate)
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/rollingupdates", c.apiServerIP, rollingUpdate.Namespace), bytes.NewBuffer(rollingUpdateJson))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.RollingUpdate]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add rolling update error: %v", baseResponse.Error)
+	}
+	return nil
+}
+
+func (c *client) DeleteRollingUpdate(name, namespace string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/rollingupdates/%s", c.apiServerIP, namespace, name), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[v1.RollingUpdate]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete rolling update error: %v", baseResponse.Error)
+	}
+	return nil
 }
 
 func (c *client) UpdateRollingUpdateStatus(name, namespace string, status *v1.RollingUpdateStatus) error {

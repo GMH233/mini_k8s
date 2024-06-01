@@ -5,7 +5,7 @@ metadata:
   namespace: default
 spec:
   serviceRef: nginx-service
-  port: 800
+  port: 802
   subsets:
     - name: nginx-v1
       weight: 1

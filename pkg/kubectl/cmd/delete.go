@@ -50,6 +50,8 @@ var deleteCommand = &cobra.Command{
 				deleteSubset(args[1], "default")
 			case "dns":
 				deleteDNS(args[1], "default")
+			case "rollingupdate":
+				deleteRollingUpdate(args[1], "default")
 
 			}
 		} else if len(args) == 1 {
@@ -78,6 +80,8 @@ var deleteCommand = &cobra.Command{
 				deleteSubset(name, namespace)
 			case "dns":
 				deleteDNS(name, namespace)
+			case "rollingupdate":
+				deleteRollingUpdate(name, namespace)
 			}
 
 		} else {
@@ -232,6 +236,23 @@ func deleteFromYAML(filename string) {
 		}
 		deleteDNS(dnsGenerated.Name, dnsGenerated.Namespace)
 		fmt.Println("DNS Deleted")
+	case "RollingUpdate":
+		fmt.Println("Delete RollingUpdate")
+		var rollingUpdateGenerated v1.RollingUpdate
+		err := json.Unmarshal(jsonBytes, &rollingUpdateGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if rollingUpdateGenerated.Name == "" {
+			fmt.Println("RollingUpdate name not found")
+			return
+		}
+		if rollingUpdateGenerated.Namespace == "" {
+			rollingUpdateGenerated.Namespace = "default"
+		}
+		deleteRollingUpdate(rollingUpdateGenerated.Name, rollingUpdateGenerated.Namespace)
+		fmt.Println("RollingUpdate Deleted")
 	}
 }
 
@@ -292,6 +313,11 @@ func deleteDNS(dnsName, nameSpace string) {
 }
 
 // TODO: 增加RolliingUpdate的删除
-// func deleteRollingUpdate(rollingUpdateName, nameSpace string) {
-// 	err := kubeclient.NewClient(apiServerIP).DeleteRollingUpdate(rollingUpdateName, nameSpace)
-// }
+func deleteRollingUpdate(rollingUpdateName, nameSpace string) {
+	err := kubeclient.NewClient(apiServerIP).DeleteRollingUpdate(rollingUpdateName, nameSpace)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+}
