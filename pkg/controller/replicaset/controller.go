@@ -4,6 +4,7 @@ import (
 	"log"
 	v1 "minikubernetes/pkg/api/v1"
 	"minikubernetes/pkg/kubeclient"
+	uuid2 "minikubernetes/tools/uuid"
 	"time"
 )
 
@@ -35,8 +36,8 @@ func (rc *replicaSetController) RunRSC() error {
 }
 
 func (rc *replicaSetController) addPod(pod *v1.Pod) {
-
-	pod.Name = pod.Name + time.Now().Format(FormatTime)
+	uuid := uuid2.NewUUID()
+	pod.Name = pod.Name + "-" + uuid
 	pod.TypeMeta.Kind = "Pod"
 	err := rc.client.AddPod(*pod)
 	if err != nil {

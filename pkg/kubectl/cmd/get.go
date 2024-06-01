@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"minikubernetes/pkg/kubeclient"
 	"os"
+	"strings"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -87,13 +88,13 @@ func getAllServices() {
 	table.Render()
 
 	ipDetailsTable := tablewriter.NewWriter(os.Stdout)
-	ipDetailsTable.SetHeader([]string{"Name/Service", "ClusterIP", "Port", "Endpoint", "Protocol"})
+	ipDetailsTable.SetHeader([]string{"Name/Service", "ClusterIP", "Port", "NodePort", "Endpoint", "Protocol"})
 	// todo 显示service的port和endpoint
 	for _, service := range services {
 		ip := service.Spec.ClusterIP
 
 		for _, svcPort := range service.Spec.Ports {
-			sideCarMpKey := fmt.Sprintf("%v:%v", ip, svcPort)
+			sideCarMpKey := fmt.Sprintf("%v:%v", ip, svcPort.Port)
 
 			allSidecarMap, err := kubeclient.NewClient(apiServerIP).GetSidecarMapping()
 			if err != nil {
@@ -104,16 +105,26 @@ func getAllServices() {
 				var epFmtStr string
 				for _, sidecarEP := range sidecarEPList {
 					for _, singleEP := range sidecarEP.Endpoints {
-						epFmtStr += fmt.Sprintf("%v:%v\n,", singleEP.IP, singleEP.TargetPort)
+						epFmtStr += fmt.Sprintf("%v:%v\n", singleEP.IP, singleEP.TargetPort)
 					}
 				}
-				ipDetailsTable.Append([]string{service.Name, ip, fmt.Sprint(svcPort.Port), epFmtStr, fmt.Sprint(svcPort.Protocol)})
+				epFmtStr = strings.TrimSpace(epFmtStr)
+				if service.Spec.Type == "NodePort" {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), fmt.Sprint(svcPort.NodePort), epFmtStr, fmt.Sprint(svcPort.Protocol)})
+				} else {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", epFmtStr, fmt.Sprint(svcPort.Protocol)})
+				}
 			} else {
-				ipDetailsTable.Append([]string{service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", fmt.Sprint(svcPort.Protocol)})
+				if service.Spec.Type == "NodePort" {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), fmt.Sprint(svcPort.NodePort), "N/A", fmt.Sprint(svcPort.Protocol)})
+				} else {
+					ipDetailsTable.Append([]string{service.Namespace + "/" + service.Name, ip, fmt.Sprint(svcPort.Port), "N/A", "N/A", fmt.Sprint(svcPort.Protocol)})
+				}
 			}
 
 		}
 	}
+	ipDetailsTable.Render()
 
 }
 func getAllHPAScalers() {
