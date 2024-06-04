@@ -1,0 +1,12 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: python-service
+spec:
+  type: NodePort
+  ports:
+    - port: 900
+      targetPort: 1024
+      nodePort: 30090
+  selector:
+    app: python
