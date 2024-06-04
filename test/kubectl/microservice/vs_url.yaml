@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: VirtualService
+metadata:
+  name: my-vs
+  namespace: default
+spec:
+  serviceRef: reviews
+  port: 9080
+  subsets:
+    - name: subset-v1
+      url: ^/reviews/1$
+    - name: subset-v2
+      url: ^/reviews/[2-3]$
