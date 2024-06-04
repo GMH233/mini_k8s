@@ -558,3 +558,30 @@ type PersistentVolumeClaimStatus struct {
 	Phase      PersistentVolumeClaimPhase `json:"phase,omitempty"`
 	VolumeName string                     `json:"volumeName,omitempty"`
 }
+
+type RollingUpdate struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+	Spec       RollingUpdateSpec   `json:"spec,omitempty"`
+	Status     RollingUpdateStatus `json:"status,omitempty"`
+}
+
+type RollingUpdateSpec struct {
+	ServiceRef   string  `json:"serviceRef,omitempty"`
+	Port         int32   `json:"port,omitempty"`
+	MinimumAlive int32   `json:"minimumAlive,omitempty"`
+	Interval     int32   `json:"interval,omitempty"`
+	NewPodSpec   PodSpec `json:"newPodSpec,omitempty"`
+}
+
+type RollingUpdatePhase string
+
+const (
+	RollingUpdatePending  RollingUpdatePhase = "Pending"
+	RollingUpdateRunning  RollingUpdatePhase = "Running"
+	RollingUpdateFinished RollingUpdatePhase = "Finished"
+)
+
+type RollingUpdateStatus struct {
+	Phase RollingUpdatePhase `json:"phase,omitempty"`
+}

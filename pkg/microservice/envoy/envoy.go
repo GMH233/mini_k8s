@@ -171,7 +171,7 @@ func getDestinationWithWeight(endpoints []v1.SidecarEndpoints) (string, error) {
 		if endpoint.Weight == nil {
 			return "", fmt.Errorf("weight not set")
 		}
-		totalWeight += *endpoint.Weight
+		totalWeight += *endpoint.Weight * int32(len(endpoint.Endpoints))
 	}
 	randWeight := int32(rand.Intn(int(totalWeight)))
 	for _, endpoint := range endpoints {

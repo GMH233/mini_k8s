@@ -2,8 +2,9 @@ package utils
 
 import (
 	"encoding/json"
-	"gopkg.in/yaml.v3"
 	v1 "minikubernetes/pkg/api/v1"
+
+	"gopkg.in/yaml.v3"
 )
 
 func JSON2YAML(jsonBytes []byte) ([]byte, error) {
@@ -64,4 +65,17 @@ func JSON2Pod(jsonBytes []byte) (*v1.Pod, error) {
 		return nil, err
 	}
 	return &pod, nil
+}
+
+func GetKind(content []byte) string {
+	var intermediate map[string]interface{}
+	err := yaml.Unmarshal(content, &intermediate)
+	if err != nil {
+		return ""
+	}
+	kind, ok := intermediate["kind"]
+	if !ok {
+		return ""
+	}
+	return kind.(string)
 }
