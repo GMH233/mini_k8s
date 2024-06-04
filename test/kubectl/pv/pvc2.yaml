@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-2
+  namespace: default
+spec:
+  request: 500Mi
+  storageClassName: nfs

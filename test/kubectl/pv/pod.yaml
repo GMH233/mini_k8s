@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-pod
+  namespace: default
+spec:
+  containers:
+    - name: c1
+      image: alpine:latest
+      volumeMounts:
+      - name: empty
+        mountPath: /mnt/empty
+      - name: pv
+        mountPath: /mnt/pv
+  volumes:
+    - name: empty
+      emptyDir: {}
+    - name: pv
+      persistentVolumeClaim:
+        claimName: test-pvc-1
+

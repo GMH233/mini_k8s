@@ -51,7 +51,7 @@ var getCommand = &cobra.Command{
 				getAllPVs()
 			}
 			if args[0] == "pvc" {
-				// getAllPVCs()
+				getAllPVCs()
 			}
 		}
 	},
