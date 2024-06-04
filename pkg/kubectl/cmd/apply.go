@@ -135,10 +135,46 @@ func apply(filename string) {
 		}
 		applyRolingUpdate(&rollingUpdateGenerated)
 		fmt.Println("Rolling Update Applied")
-
+	case "PersistentVolume":
+		fmt.Println("Apply PersistentVolume")
+		var pvGenerated v1.PersistentVolume
+		err := json.Unmarshal(jsonBytes, &pvGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyPersistentVolume(&pvGenerated)
+	case "PersistentVolumeClaim":
+		fmt.Println("Apply PersistentVolumeClaim")
+		var pvcGenerated v1.PersistentVolumeClaim
+		err := json.Unmarshal(jsonBytes, &pvcGenerated)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		applyPersistentVolumeClaim(&pvcGenerated)
 	}
 
 }
+
+func applyPersistentVolume(pv *v1.PersistentVolume) {
+	err := kubeclient.NewClient(apiServerIP).AddPV(pv)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("PersistentVolume Applied")
+}
+
+func applyPersistentVolumeClaim(pvc *v1.PersistentVolumeClaim) {
+	err := kubeclient.NewClient(apiServerIP).AddPVC(pvc)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("PersistentVolumeClaim Applied")
+}
+
 func applyPod(pod v1.Pod) {
 	err := kubeclient.NewClient(apiServerIP).AddPod(pod)
 	if err != nil {

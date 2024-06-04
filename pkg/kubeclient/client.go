@@ -74,6 +74,7 @@ type Client interface {
 	UpdatePVStatus(pv *v1.PersistentVolume) error
 	UpdatePVCStatus(pvc *v1.PersistentVolumeClaim) error
 	AddPV(pv *v1.PersistentVolume) error
+	AddPVC(pvc *v1.PersistentVolumeClaim) error
 }
 
 type client struct {
@@ -1175,6 +1176,34 @@ func (c *client) DeleteVirtualServiceByNameNp(vsName, nameSpace string) error {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("delete virtual service error: %v", resp.Status)
+	}
+	return nil
+}
+
+func (c *client) AddPVC(pvc *v1.PersistentVolumeClaim) error {
+	jsonBytes, err := json.Marshal(pvc)
+	if err != nil {
+		return err
+	}
+	// POST to API server
+	url := fmt.Sprintf("http://%s:8001/api/v1/namespaces/%s/persistentvolumeclaims", c.apiServerIP, pvc.Namespace)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var baseResponse v1.BaseResponse[*v1.PersistentVolumeClaim]
+	err = json.NewDecoder(resp.Body).Decode(&baseResponse)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("add pvc failed, error: %v", baseResponse.Error)
 	}
 	return nil
 }

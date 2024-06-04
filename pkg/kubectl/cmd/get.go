@@ -47,9 +47,59 @@ var getCommand = &cobra.Command{
 			if args[0] == "rollingupdates" || args[0] == "rollingupdate" {
 				getAllRollingUpdate()
 			}
-
+			if args[0] == "pv" {
+				getAllPVs()
+			}
+			if args[0] == "pvc" {
+				// getAllPVCs()
+			}
 		}
 	},
+}
+
+func getAllPVCs() {
+	pvcs, err := kubeclient.NewClient(apiServerIP).GetAllPVCs()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "Request", "StorageClass", "Phase", "VolumeName"})
+	for _, pvc := range pvcs {
+		table.Append([]string{
+			"PersistentVolumeClaim",
+			pvc.Namespace,
+			pvc.Name,
+			pvc.Spec.Request,
+			pvc.Spec.StorageClassName,
+			string(pvc.Status.Phase),
+			pvc.Status.VolumeName,
+		})
+	}
+	table.Render()
+}
+
+func getAllPVs() {
+	pvs, err := kubeclient.NewClient(apiServerIP).GetAllPVs()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Kind", "Namespace", "Name", "Capacity", "StorageClass", "Phase", "Server", "Path", "ClaimName"})
+	for _, pv := range pvs {
+		table.Append([]string{"PersistentVolume",
+			pv.Namespace,
+			pv.Name,
+			pv.Spec.Capacity,
+			pv.Spec.StorageClassName,
+			string(pv.Status.Phase),
+			pv.Status.Server,
+			pv.Status.Path,
+			pv.Status.ClaimName,
+		})
+	}
+	table.Render()
 }
 
 func getAllPods() {
