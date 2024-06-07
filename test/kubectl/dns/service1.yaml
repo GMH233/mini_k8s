@@ -1,0 +1,12 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: nginx-service
+spec:
+  type: NodePort
+  ports:
+    - port: 800
+      targetPort: 80
+      nodePort: 30080
+  selector:
+    app: nginx

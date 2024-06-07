@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: DNS
+metadata:
+  name: my-dns
+spec:
+  rules:
+    - host: myservice.com
+      paths:
+        - path: /nginx
+          backend:
+            service:
+              name: nginx-service
+              port: 800
+        - path: /python
+          backend:
+            service:
+              name: python-service
+              port: 900
