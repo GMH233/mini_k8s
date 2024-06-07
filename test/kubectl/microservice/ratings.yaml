@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ratings-v1
+  namespace: default
+  labels:
+    app: ratings
+spec:
+  containers:
+    - name: productpage
+      image: istio/examples-bookinfo-ratings-v1:1.19.1
+      ports:
+        - containerPort: 9080
+          protocol: tcp
+    - name: envoy-proxy
+      image: sjtuzc/envoy:1.2
+      securityContext:
+        runAsUser: 1337
+  initContainers:
+    - name: envoy-init
+      image: sjtuzc/envoy-init:latest
+      securityContext:
+        privileged: true

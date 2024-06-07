@@ -1,0 +1,26 @@
+kind: HorizontalPodAutoscaler
+apiVersion: v1
+metadata:
+  name: test-hpa
+spec:
+  scaleTargetRef:
+    kind: ReplicaSet
+    name: nginx-replicaset
+    namespace: default
+  minReplicas: 1
+  maxReplicas: 3
+  scaleWindowSeconds: 20
+  metrics:
+    - name: memory
+      target:
+        type: AverageValue
+        AverageValue: 100
+  behavior:
+    scaleUp:
+      type: Pods
+      value: 1
+      periodSeconds: 60
+    scaleDown:
+      type: Pods
+      value: 1
+      periodSeconds: 60

@@ -1,0 +1,14 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: nginx-pod-1
+  namespace: default
+  labels:
+    app: nginx
+spec:
+  containers:
+    - name: container
+      image: python:latest
+      ports:
+        - containerPort: 1024
+          protocol: tcp

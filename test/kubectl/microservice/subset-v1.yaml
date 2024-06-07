@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Subset
+metadata:
+  name: subset-v1
+  namespace: default
+spec:
+  pods: ["reviews-v1"]

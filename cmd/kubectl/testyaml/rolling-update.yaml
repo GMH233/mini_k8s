@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: RollingUpdate
+metadata:
+  name: my-ru
+spec:
+  serviceRef: reviews
+  port: 9080
+  minimumAlive: 1
+  interval: 20
+  newPodSpec:
+    containers:
+      - name: reviews
+        image: istio/examples-bookinfo-reviews-v3:1.19.1
+        ports:
+          - containerPort: 9080
+            protocol: tcp
+      - name: envoy-proxy
+        image: sjtuzc/envoy:1.1
+        securityContext:
+          runAsUser: 1337
+    initContainers:
+      - name: proxy-init
+        image: sjtuzc/envoy-init:latest
+        securityContext:
+          privileged: true
