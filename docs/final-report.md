@@ -276,6 +276,10 @@ server {
 
 目前支持的流量类型为 http 流量。Envoy 的相应端口获取到出/入站http请求后，会读取 http 报文中的 Host 和 URL，根据从pilot获取到的 `SidecarMapping`，使用加权随机或URL正则匹配算法，决定流量的实际目的地，并启动一个 http 反向代理（golang 内置的 `httputil.ReverseProxy`）服务该请求。
 
+要为 Pod 注入 Envoy，需要进行如图红框所示的修改，其中 envoy 和 envoy-init 镜像均为自行制作，Dockerfile 位于 `cmd/envoy` 和 `cmd/envoyinit` 目录下：
+
+![](assets/inject-sidecar.png)
+
 #### 5.8.2 流量转发控制
 
 本项目通过 VirtualService 和 Subset 两个api对象进行流量转发控制。
