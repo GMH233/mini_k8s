@@ -162,9 +162,9 @@ Service的负载均衡策略同样由IPVS提供，本项目中选用Round Robin�
 
 ### 5.4 ReplicaSet抽象
 
-ReplicaSet是一种副本控制器，主要作用是控制由其管理的pod，使pod副本的数量始终维持在预设的个数。它的主要作用就是保证一定数量的Pod能够在集群中正常运行，它会持续监听这些Pod的运行状态，在Pod发生故障时重启pod，pod数量减少时重新运行新的 Pod副本。
+ReplicaSet是一种副本控制器，主要作用是控制由其管理的 Pod，使 Pod 的可用副本的数量始终维持在预设的个数。ReplicaSet通过标签选择器确定它管理哪些Pod。
 
-Replicaset的配置文件包括ReplicaSet名称，副本的数量，生成pod的template。实例如下：
+Replicaset的配置文件包括ReplicaSet名称，副本的数量，标签选择器，Pod数量不足时添加Pod的模板。示例如下：
 
 ```yaml
 kind: ReplicaSet
@@ -192,10 +192,9 @@ spec:
               protocol: tcp
 ```
 
-创建ReplicaSet的请求到达apiserver后，apiserver会将ReplicaSet数据存储在etcd中。ReplicaSetController则轮询存储的ReplicaSet数据和Pod数据，将后者和前者的要求进行比较，如果多出，则向apiserver发送删除对应pod的请求，如果不足，则向apiserver发送增加replicaSet中template的pod请求。
+创建ReplicaSet的请求到达apiserver后，apiserver会将ReplicaSet数据存储在etcd中。ReplicaSetController则轮询集群中所有ReplicaSet和Pod，根据标签选择器计算可用Pod数量。如果Pod数量超过副本数，则向apiserver发送删除对应pod的请求；如果Pod数量不足，则向apiserver发送增加replicaSet中template的pod请求。
 
-计算Pod数量时，状态为 `Failed` 的Pod将会被忽略。
-
+计算当前Pod数量时，状态为 `Failed` 的Pod将会被忽略。这样，当有 Pod 异常退出时，ReplicaSet也会做出响应，添加新的Pod。
 
 ### 5.6 DNS与转发
 
@@ -333,7 +332,7 @@ spec:
     - nginx-pod-2
 ```
 
-pilot会持续监听存储在 etcd 内的 VirtualService，Subset 和 Service，并且根据配置计算出被 VirtualService 管理的 Service 的流量按照何种权重或URL匹配转发到每个 Endpoint。此外，还会根据权重相等的原则计算其他未被 VirtualService 管理的 Service 的转发方式。上述计算结果称为 `SidecarMapping` ，也就是 `(ServiceIP, Port)->[(PodIP, TargetPort, Weight/URL)]` 的映射，存储在 etcd 中，供每个 Envoy 获取。
+pilot会持续监听存储在 etcd 内的 VirtualService，Subset 和 Service，并且根据配置计算出被 VirtualService 管理的 Service 的流量按照何种权重或URL匹配转发到每个 Endpoint。如果指定根据权重分配流量，每个 Subset 的权重最终会被计算为每个 Endpoint 的权重（例如 Subset 权重为 `[1, 2]`, Subset 大小为 `[2, 1]`, 最终的权重配比将是`[1, 1, 4]`）。此外，还会计算其他未被 VirtualService 管理的 Service 的转发方式，此时所有 Endpoint 具有默认的相等权重。上述计算结果称为 `SidecarMapping` ，也就是 `(ServiceIP, Port)->[(PodIP, TargetPort, Weight/URL)]` 的映射，存储在 etcd 中，供每个 Envoy 获取。
 
 
 #### 5.9.3 灰度发布
@@ -443,7 +442,7 @@ Pod创建时，指定的 PVC 必须已处于 `Bound` 状态。Kubelet将会为�
 
 ![](assets/pv.drawio.png)
 
-这样，就可以实现一个集群级别的持久化存储。Pod删除或退出后，由于 nfs server 目录仍被持久化保存，可以将 PV 重新绑定到其他 Pod。
+这样，就可以实现一个集群级别的持久化存储。Pod删除或退出后，由于 nfs server 目录仍被持久化保存，可以将 PV 重新绑定到其他 Pod，而不会丢失 PV 存储的数据。
 
 ### 6.2 GPU
 
