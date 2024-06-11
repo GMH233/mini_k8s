@@ -39,6 +39,16 @@ Envoy是基于sidecar架构实现的服务网格中，被注入到每个Pod中�
 
 ![](assets/servicemesh.drawio.png)
 
+### 4.4 Scheduler
+
+Scheduler 是一个控制面组件，负责将未调度的Pod调度到合适的节点上。目前 Scheduler 支持三种策略：
+
+1. Round Robin：将Pod轮流调度到不同节点上。
+2. Random：随机选择一个节点调度。
+3. Node Affinity：根据 Pod 和 Node 配置文件中的 `label` 字段进行匹配，优先将 Pod 调度到匹配的 Node 上。否则随机匹配。
+
+在本项目中，Pod 与其所属的 Node 的映射关系单独存储在 etcd 中，方便快速查询指定 Node 的所有 Pod。
+
 ## 5. 功能实现细节
 
 ### 5.1 Pod抽象
@@ -258,10 +268,17 @@ server {
 	* 所有api对象的配置与状态数据全部持久化在etcd中。
 * 工作节点在无法连接到控制面时，总是尝试维持节点状态为已知最新的期望状态，而不是回收本节点上的资源。
 
+### 5.8 多机
 
-### 5.8 MicroService
+本项目支持多个工作节点同时运行，在 Kubelet 启动时，可以通过 `-j` 参数指定控制面节点的 IP，通过 `-c` 参数指定本地 Node 配置文件（可选），在启动时将自身注册到 apiserver 中，此后 scheduler 将会开始往这个新节点调度 Pod。当 Kubelet 退出后，也会解除自身节点的注册，原来被调度到该节点的 Pod 会回到 Unscheduled 状态，可被再次调度。
 
-#### 5.8.1 流量劫持与转发
+由于 Scheduler 的 NodeAffinity 策略只需要考虑 Node 的 `label`， 而其他策略与节点配置无关，故 Node 的配置文件较为简单，仅包含 `kind, apiVersion, metadata` 三个字段。
+
+由于 weave CNI 插件已经支持了多机集群，故在多机场景下，Service 的实现无需调整，即可在不同节点上访问同一 Service 下的任何 Pod，而无需关心其运行位置。
+
+### 5.9 MicroService
+
+#### 5.9.1 流量劫持与转发
 
 为了使Envoy能够在Pod内部进行流量劫持，需要在Pod网络命名空间内配置iptables规则。参考istio的实现，在nat表中添加四条链（前缀为 `MISTIO`）和一些路由规则，如下图所示：
 
@@ -280,7 +297,7 @@ server {
 
 ![](assets/inject-sidecar.png)
 
-#### 5.8.2 流量转发控制
+#### 5.9.2 流量转发控制
 
 本项目通过 VirtualService 和 Subset 两个api对象进行流量转发控制。
 
@@ -319,14 +336,14 @@ spec:
 pilot会持续监听存储在 etcd 内的 VirtualService，Subset 和 Service，并且根据配置计算出被 VirtualService 管理的 Service 的流量按照何种权重或URL匹配转发到每个 Endpoint。此外，还会根据权重相等的原则计算其他未被 VirtualService 管理的 Service 的转发方式。上述计算结果称为 `SidecarMapping` ，也就是 `(ServiceIP, Port)->[(PodIP, TargetPort, Weight/URL)]` 的映射，存储在 etcd 中，供每个 Envoy 获取。
 
 
-#### 5.8.3 灰度发布
+#### 5.9.3 灰度发布
 
 有了上文提到的 VirtualService + Subset两个api对象，用户可以自行实现服务的灰度发布：
 
 * 首先，定义服务新旧版本各自的 Subset，如subset-v1，subset-v2。
 * 在灰度发布的不同阶段，创建不同的 VirtualService，按需调整每个 Subset 的权重（或URL），达到灰度发布的目的。
 
-#### 5.8.4 滚动升级
+#### 5.9.4 滚动升级
 
 滚动升级的配置文件内容包括：名称，管理的Service端口，Pod最小存活数，升级间隔时间，升级目标Pod Spec。示例文件如下：
 
