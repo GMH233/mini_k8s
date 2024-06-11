@@ -1,0 +1,453 @@
+## 4. 系统架构和组件功能
+### 4.1 Kubelet
+
+Kubelet运行在每一个工作节点上，主要负责在本节点上Pod的创建和删除，Pod生命周期的监控与管理，Pod状态的回传同步。具体来说，Kubelet几大功能点的实现方式如下：
+
+1. Pod的创建和删除：Kubelet周期性地向控制面询问本节点上的所有Pod配置，通过与本地的最新缓存进行对比，计算出一次询问周期内的所有配置变更（即Pod的增加/删除），并调用容器运行时接口进行相应操作。
+2. Pod生命周期的监控与管理：Kubelet进程包含一个PLEG（Pod Lifecycle Event Generator）子协程，通过周期性地询问容器运行时接口，获取所有Pod的运行期状态，与最新的缓存进行对比。若新旧状态不一致，则生成相应的生命周期事件通知主协程，由主协程根据事件类型决定如何应对该事件（例如制定了重启策略时，当收到`ContainerDied`事件时，将会执行容器重启操作）。
+3. Pod状态的回传同步：当收到生命周期事件时，Kubelet将本地缓存中最新的Pod状态发送给apiserver；此外，Kubelet还会通过定时器，定期将收集到的容器指标（cpu，内存使用情况等）回传给apiserver。
+
+为了支持以上功能的实现，Kubelet总体架构如图所示：
+
+![](assets/kubelet.drawio.png)
+
+图中实线箭头为函数调用，虚线箭头为事件传播。有关子组件功能如下：
+
+* `pod.Manager`: 提供Pod Specification的本地缓存接口。
+* `runtime.Cache`: 提供Pod Status的本地缓存接口。
+* `runtime.RuntimeManager`: 对docker sdk的封装层，将容器粒度的操作封装为Pod粒度的操作，提供`AddPod`，`DeletePod`，`GetPodStatus`等接口。
+* `pleg.PLEG`: 定期计算Pod生命周期事件发送给主协程。
+* `metrics.MetricsCollector`: 不断通过cadvisor获取容器指标，发送给控制面。
+* `kubelet.PodWorkers`: 为每一个Pod分配一个worker协程，并提供把任务下放到worker协程的接口供主协程使用（异步任务，缩短主协程的阻塞时间，减少latency）。
+
+可以看出，Kubelet主协程实质上是一个事件循环，侦听配置变更，生命周期，定时任务等事件并进行相应操作。go语言的 goroutine + channel 特性为实现事件循环提供了很大的便利。
+
+### 4.2 Kubeproxy
+
+Kubeproxy同样运行在每个工作节点上，主要负责：
+
+1. 根据集群中的Service配置，在本节点上进行流量的转发，使用户能够通过Service的虚拟IP（Cluster IP）或节点端口（NodePort）访问到Service的真实提供者（Endpoint）。
+2. 根据集群DNS配置，在本节点上配置DNS nameserver，提供给Pod和宿主机使用。由于url路径是http层的概念，要支持不同路径指向不同service，还会配置http反向代理。
+
+本项目中，Kubeproxy利用Linux IPVS进行流量转发，使用coredns作为DNS服务器，nginx作为反向代理。Service和DNS的实现细节见第5节。
+
+### 4.3 Envoy/Pilot
+
+Envoy是基于sidecar架构实现的服务网格中，被注入到每个Pod中的sidecar proxy，而Pilot则是服务网格的控制面组件。用户可以声明式指定微服务之间的流量转发方式，由Pilot基于此计算生成一个路由表（称为`SidecarMapping`），包含了 `(ServiceIP, Port)` 到 `[(EnpointIP, TargetPort, weight/URL)]` 的映射。Envoy则劫持Pod的所有进出站流量，并通过该路由表进行转发。
+
+本项目中的服务网格架构如下：
+
+![](assets/servicemesh.drawio.png)
+
+## 5. 功能实现细节
+
+### 5.1 Pod抽象
+
+Pod是一组共同工作的容器的抽象，属于同一个Pod的容器共享同一个网络命名空间，可以通过localhost互相访问，且可以通过指定存储卷的创建与挂载实现文件共享。同时，Pod也是MiniK8s中其他高级功能管理的最小单元（如Service / MicroService，ReplicaSet / HPA，Scheduler等等）。
+
+Pod的配置文件内容包括：Pod名称，容器（包括镜像，命令，暴露端口，卷挂载点，资源用量，安全上下文），存储卷（包括卷名称，卷类型），初始化容器（运行后即退出），重启策略（目前支持None和Always）。示例如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: default
+spec:
+  containers:
+    - name: python
+      image: python:latest
+      command: ["python", "-m", "http.server", "8000"]
+      ports:
+        - containerPort: 8000
+          protocol: tcp
+      volumeMounts:
+        - name: volume1
+          mountPath: /mnt/v1
+      resources:
+        limits:
+          cpu: 500m
+        requests:
+          cpu: 100m
+      securityContext:
+        privileged: true
+  initContainers:
+    - name: init
+      image: python:latest
+  volumes:
+    - name: volume1
+      emptyDir: {}
+  restartPolicy: Always
+```
+
+下面通过一个Pod的生命周期，详细说明Pod抽象的实现方式：
+
+1. Pod从创建到在集群内可见
+
+	* 当用户使用 `kubectl apply` 创建Pod时，apiserver校验参数后将其存入etcd，此时Pod状态字段为空，且处于未调度状态。Scheduler在轮询中会获取到这个未被调度的Pod，通过一定调度策略向apiserver发起调度请求，此时etcd中会新增一项Node到Pod的映射。Kubelet通过 `GetPodByNode` 接口便可获取到该Pod，更新Pod Spec缓存，并创建一个worker协程，并在worker协程中调用 `RuntimeManager` 的 `AddPod` 接口。
+
+	* 在 `AddPod` 中，为了使容器共享网络命名空间，首先会创建一个Pause容器，并将其他容器的网络模式设为 `container` 模式。这样，所有容器都与Pause容器共享网络命名空间。至于创建容器的其他操作，则均能通过调用docker sdk直接实现（暴露端口，挂载卷等等）。
+
+	* PLEG在Relist定时循环中，通过`RuntimeManager`的 `GetPodStatus` 接口获取到所有Pod的容器的运行状态。由于有新Pod启动，会发现两次Relist之间获取到的状态不同，于是将最新状态更新到Pod Status缓存，并根据新旧状态计算出生命周期事件 `ContainerStarted`，发送给主协程。主协程将缓存中的状态回传给apiserver，此时Pod状态在整个集群内可见。
+2. Pod被集群删除
+	* 用户可以使用 `kubectl delete` 删除Pod，此时apiserver会直接删除etcd中有关该Pod的所有数据。Kubelet随后会发现本节点的Pod发生了变化，触发一次删除操作，删除Pod Spec缓存，使用 `RuntimeManager` 的 `DeletePod` 接口清除属于该Pod的所有容器（包括Pause）。
+	* PLEG发现容器被移除，发送 `ContainerRemoved` 事件，但由于本地Pod Spec缓存中已不再有该Pod的条目，事件被日志记录后忽略。
+
+3. Pod内容器退出
+	* PLEG发现容器退出，发送 `ContainerDied` 事件。若Pod的重启策略为 `None`，则主协程根据最新Pod Status缓存，重新计算Pod的api状态（即对集群提供的状态），可能为 `Running` （还有其他容器未退出），`Succeeded` （退出码为0）, 或 `Failed` （退出码非0），并发送给apiserver。
+	* 若Pod的重启策略为 `Always`，则主协程调用 `RestartPod` 接口尝试重启整个Pod。
+
+上述退出处理策略如下图所示：
+
+![](assets/pod.drawio.png)
+
+### 5.2 CNI
+
+本项目中，选用的CNI插件为weave，将对CNI的调用集成到Pod功能中。在 `RuntimeManager` 创建Pod时，会调用 `weave attach` 为Pause容器赋予IP，由于共享网络命名空间，最后所有容器都拥有这一IP。
+
+在多机场景下，新机器需要调用 `weave connect` 加入weave集群，此后通过 `weave attach` 赋予的IP将在所有工作节点中可见。
+
+### 5.3 Service抽象
+
+Service是某一组Pod所暴露的网络服务的抽象，当用户在集群内创建一个Service后，能够通过其虚拟IP访问到真实网络服务。这一抽象屏蔽了网络服务具体提供者的IP等信息，由Kubeproxy负责管理。
+
+Service的配置文件内容包括：Service名称，标签选择器，类型（支持ClusterIP和NodePort），一组虚拟端口与对应的真实端口。示例如下：
+
+```yaml
+kind: Service
+apiVersion: v1
+metadata:
+  name: nginx-service
+spec:
+  type: NodePort
+  ports:
+    - port: 800
+      targetPort: 1024
+      nodePort: 30080
+  selector:
+    app: nginx
+```
+
+创建Service的请求到达apiserver后，apiserver会在一个预留网段（100.0.0.0/24）的IP池中为其分配一个ClusterIP。具体实现方式是在etcd中持久化一个bitmap，每个bit对应IP池中的一个IP的占用情况，分配时通过bitmap找到一个可用IP并翻转对应bit即可。
+
+本项目中，Kubeproxy利用Linux IPVS进行流量转发。首先，Kubeproxy在启动时会进行必要的初始化，为的是IPVS的流量转发功能能够在每种使用场景下均正确生效，场景包括Pod互访，宿主机访问Pod，Pod访问自身。具体配置参考了文章https://zhuanlan.zhihu.com/p/431571642 。等效命令如下（内核模块和系统参数的作用比较冗长，不再赘述）：
+
+```bash
+modprobe br_netfilter
+ip link add dev minik8s-dummy type dummy // 每增加一个虚拟IP，都绑定到该设备上
+sysctl --write net.bridge.bridge-nf-call-iptables=1
+sysctl --write net.ipv4.ip_forward=1
+sysctl --write net.ipv4.vs.conntrack=1
+```
+
+IPVS进行流量转发的基本概念是Virtual Server和Real Server，与Service抽象高度重合。为Service（的一个Port）配置规则时，Virtual Server设为ClusterIP:Port, 其目的地Real Server则设置为该Service所有Endpoint的PodIP:TargetPort。支持NodePort时，只需额外添加一个Virtual Server，即HostIP:NodePort，其目的地Real Server与前述一致。
+
+Service的负载均衡策略同样由IPVS提供，本项目中选用Round Robin。
+
+综上，示例Service对应的IPVS规则应当如下图所示：
+
+![](assets/ipvs.jpg)
+
+与Kubelet类似，Kubeproxy会定期向控制面询问集群中的所有Service和Pod，根据标签选择器，以及Pod的容器暴露的端口，计算出每个Service的所有Endpoint，并与本地最新缓存进行比较。发现本地版本落后，需要更新本地IPVS规则时，调用封装好的IPVS接口进行更新。
+
+### 5.4 ReplicaSet抽象
+
+ReplicaSet是一种副本控制器，主要作用是控制由其管理的pod，使pod副本的数量始终维持在预设的个数。它的主要作用就是保证一定数量的Pod能够在集群中正常运行，它会持续监听这些Pod的运行状态，在Pod发生故障时重启pod，pod数量减少时重新运行新的 Pod副本。
+
+Replicaset的配置文件包括ReplicaSet名称，副本的数量，生成pod的template。实例如下：
+
+```yaml
+kind: ReplicaSet
+apiVersion: v1
+metadata:
+  name: nginx-replicaset
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      name: nginx-pod
+      namespace: default
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: container
+          image: python:latest
+          ports:
+            - containerPort: 1024
+              protocol: tcp
+```
+
+创建ReplicaSet的请求到达apiserver后，apiserver会将ReplicaSet数据存储在etcd中。ReplicaSetController则轮询存储的ReplicaSet数据和Pod数据，将后者和前者的要求进行比较，如果多出，则向apiserver发送删除对应pod的请求，如果不足，则向apiserver发送增加replicaSet中template的pod请求。
+
+计算Pod数量时，状态为 `Failed` 的Pod将会被忽略。
+
+
+### 5.6 DNS与转发
+
+本项目中，DNS这一api对象有两大功能，一是支持将自定义的域名解析到指定的Service，二是在此基础上支持同一域名的不同路径可以对应到不同Service。
+
+DNS的配置文件内容包括：DNS名称，DNS规则（包括域名，子路径对应的后端service）。示例如下：
+
+```yaml
+apiVersion: v1
+kind: DNS
+metadata:
+  name: my-dns
+spec:
+  rules:
+    - host: myservice.com
+      paths:
+        - path: /nginx
+          backend:
+            service:
+              name: nginx-service
+              port: 800
+        - path: /python
+          backend:
+            service:
+              name: python-service
+              port: 900
+```
+
+为了支持自定义的DNS解析，在工作节点的宿主机上需要启动coredns，并指定其作为Pod和宿主机的DNS服务器（通过修改Pod和宿主机的`/etc/resolv.conf`文件实现），同时需要启动nginx服务。Kubeproxy会通过轮询apiserver，找到最新配置，并基于此动态地修改二者的配置文件，使DNS可用。如下图所示，一个通过DNS api对象自定义的域名会被解析到nginx监听的IP地址，而nginx会进一步根据路径匹配，将流量分发到不同service后端。
+
+![](assets/dns.drawio.png)
+
+coredns配置方式如下，增加域名时往`/etc/coredns/hosts`中写入新条目即可：
+
+```
+. {
+    //自定义hosts
+    hosts /etc/coredns/hosts {
+        fallthrough
+    } 
+    // 没找到则转发给jcloud dns服务器
+    forward . 202.120.2.100 202.120.2.101 
+    log
+    errors
+}
+```
+
+nginx配置方式如下，增加域名时在`/etc/nginx/conf.d`中新建一个配置文件：
+```
+server {
+    listen 80; // http默认80端口
+    server_name my-service.com; // 域名
+    location /svc1 {
+        proxy_pass http://100.0.0.0:8080/; //转发给具体Service
+    }
+    location /svc2 {
+        ...
+    }
+}
+```
+
+在实现微服务时，由于微服务通常的使用方法是使用服务名作为域名，故在创建 Service 时，还会添加一条 ServiceName 到 ServiceIP 的 DNS 解析配置。这样，应用除了使用 ServiceIP，还可以通过 `ServiceName:Port/path` 来访问具体Service。
+
+### 5.7 容错
+
+本项目中，要求控制面重启对集群中的Pod和Service均无影响。为此，在控制面和工作节点的实现中，分别采取了以下思路：
+* 控制面的所有组件均实现为无状态的。
+	* apiserver本身不保存任何会话信息，提供无状态的Restful API。
+	* 其他控制面组件在轮询apiserver的过程中，除了中间计算结果，没有任何需要存储在内存中的状态。重启最多导致一次中间计算结果的丢失。
+	* 所有api对象的配置与状态数据全部持久化在etcd中。
+* 工作节点在无法连接到控制面时，总是尝试维持节点状态为已知最新的期望状态，而不是回收本节点上的资源。
+
+
+### 5.8 MicroService
+
+#### 5.8.1 流量劫持与转发
+
+为了使Envoy能够在Pod内部进行流量劫持，需要在Pod网络命名空间内配置iptables规则。参考istio的实现，在nat表中添加四条链（前缀为 `MISTIO`）和一些路由规则，如下图所示：
+
+![](assets/iptables.drawio.png)
+
+配置完毕后，所有入站流量会被重定向到15006端口，出站流量会被重定向到15001端口，这两个端口均被Envoy监听。有几种特殊情况：
+
+* 为了避免死循环，即Envoy自己劫持自己的出站流量，Envoy进程将会被赋予一个独特的uid（1337），在iptables中指定，对于uid或gid=1337的出站流量，不做任何处理。
+* 当流量从lo网卡输出时：如果地址不是回环地址，表明这是一个Pod内部使用非回环地址的互访（例如，目的地址为CNI赋予的本地PodIP），该流量需要被视为进站流量并劫持。如果地址是回环地址，表明应用程序清楚自己需要访问本地端口，对该流量不做任何处理。
+
+由于 iptables 规则必须由 root 用户配置，所以这一过程需要在一个特权 initContainer 中完成（即配置文件中指定 `privileged = true`）。
+
+目前支持的流量类型为 http 流量。Envoy 的相应端口获取到出/入站http请求后，会读取 http 报文中的 Host 和 URL，根据从pilot获取到的 `SidecarMapping`，使用加权随机或URL正则匹配算法，决定流量的实际目的地，并启动一个 http 反向代理（golang 内置的 `httputil.ReverseProxy`）服务该请求。
+
+#### 5.8.2 流量转发控制
+
+本项目通过 VirtualService 和 Subset 两个api对象进行流量转发控制。
+
+VirtualService的配置文件主要包括：VirtualService名称，管理的Service名称及其端口，包含的Subset及其权重或URL。权重和URL只能同时指定一种。示例如下:
+
+```yaml
+apiVersion: v1
+kind: VirtualService
+metadata:
+  name: nginx-vs
+  namespace: default
+spec:
+  serviceRef: nginx-service
+  port: 802
+  subsets:
+    - name: nginx-v1
+      weight: 1
+    - name: nginx-v2
+      weight: 2
+```
+
+Subset的配置文件主要包括：Subset名称和管理的pod。示例如下：
+
+```yaml
+apiVersion: v1
+kind: Subset
+metadata:
+  name: nginx-v1
+  namespace: default
+spec:
+  pods:
+    - nginx-pod-1
+    - nginx-pod-2
+```
+
+pilot会持续监听存储在 etcd 内的 VirtualService，Subset 和 Service，并且根据配置计算出被 VirtualService 管理的 Service 的流量按照何种权重或URL匹配转发到每个 Endpoint。此外，还会根据权重相等的原则计算其他未被 VirtualService 管理的 Service 的转发方式。上述计算结果称为 `SidecarMapping` ，也就是 `(ServiceIP, Port)->[(PodIP, TargetPort, Weight/URL)]` 的映射，存储在 etcd 中，供每个 Envoy 获取。
+
+
+#### 5.8.3 灰度发布
+
+有了上文提到的 VirtualService + Subset两个api对象，用户可以自行实现服务的灰度发布：
+
+* 首先，定义服务新旧版本各自的 Subset，如subset-v1，subset-v2。
+* 在灰度发布的不同阶段，创建不同的 VirtualService，按需调整每个 Subset 的权重（或URL），达到灰度发布的目的。
+
+#### 5.8.4 滚动升级
+
+滚动升级的配置文件内容包括：名称，管理的Service端口，Pod最小存活数，升级间隔时间，升级目标Pod Spec。示例文件如下：
+
+```yaml
+apiVersion: v1
+kind: RollingUpdate
+metadata:
+  name: my-ru
+spec:
+  serviceRef: reviews
+  port: 9080
+  minimumAlive: 1
+  interval: 15
+  newPodSpec:
+    containers:
+      - name: reviews
+        image: istio/examples-bookinfo-reviews-v3:1.19.1
+        ports:
+          - containerPort: 9080
+            protocol: tcp
+      - name: envoy-proxy
+        image: sjtuzc/envoy:1.2
+        securityContext:
+          runAsUser: 1337
+    initContainers:
+      - name: proxy-init
+        image: sjtuzc/envoy-init:latest
+        securityContext:
+          privileged: true
+```
+
+执行滚动升级时，每次会删除 `total - minimumAlive` 个 Pod，并基于新的 Pod Spec重新添加。同时，通过前述流量控制方式，通过创建 Subset 并设置权重为0，阻止流量到达正在升级中的 Pod。删除和创建后均会等待 `0.5 * interval` 秒，确保服务有足够时间启动。
+
+## 6. 个人作业
+
+### 6.1 持久化存储
+
+持久化存储功能位于分支 `feature/pv`。
+
+本项目中的持久化存储基于 PersistentVolume 以及 PersistentVolumeClaim 两个抽象实现。其中 PV 代表的是真实存储资源，而 PVC 代表对真实资源的申领，创建 PVC 后，其将会与集群中可用且符合要求的 PV 进行绑定。Pod可以通过指定 PVC 名称挂载其绑定的 PV。
+
+PV配置文件包括：PV名称，容量，存储类名称（本项目中，对k8s中的存储类概念进行了简化，暂时仅支持一种存储类 `nfs`，其制备方法集成在代码逻辑中）。示例如下：
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-pv
+  namespace: default
+spec:
+  capacity: 1Gi
+  storageClassName: nfs
+```
+
+PVC配置文件包括：PVC名称，要求容量，存储类名称。示例如下：
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-1
+  namespace: default
+spec:
+  request: 500Mi
+  storageClassName: nfs
+```
+
+PVC与PV的绑定有两种方式：一是根据存储类名称和要求容量，在集群中与已创建的符合要求的PV绑定；二是当集群中不存在符合要求的PV时，根据存储类名称动态创建PV。当前本项目默认支持了 `nfs` 存储类。
+
+PV和PVC的管理由 PVController 负责。PVController将会轮询集群中的PV和PVC，进行以下操作：
+* 对于已创建，处于 `Pending` 状态的 PV，在本节点上为其创建目录，并通过修改 `/etc/exports` 文件，运行 `exportfs -ra` 将其导出，可以供任意内网节点通过 nfs client 挂载。此时 PV 状态转变为 `Available`。
+* 对于已创建，处于 `Pending` 状态的 PVC，寻找所有处于 `Available` 状态的 PV，与其绑定。此时二者状态都变为 `Bound`，且会将双向绑定关系存入二者的 `Status` 字段。若找不到符合条件的 PV，则尝试创建一个，等待下次轮询时再绑定。
+* 对于删除的 PVC，将其 PV 状态重新变为 `Available`。
+
+若要创建一个挂载持久卷的Pod，配置文件如下所示：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-pod
+  namespace: default
+spec:
+  containers:
+    - name: c1
+      image: alpine:latest
+      volumeMounts:
+      - name: pv
+        mountPath: /mnt/pv
+  volumes:
+    - name: pv
+      persistentVolumeClaim:
+        claimName: test-pvc-1
+```
+
+Pod创建时，指定的 PVC 必须已处于 `Bound` 状态。Kubelet将会为与该存储卷创建一个宿主机临时目录，并使用 `mount -t nfs` 挂载 nfs server 导出的路径到宿主机。随后，再通过docker sdk将该宿主机目录挂载进Pod。Pod被删除时，使用 `umount` 解除挂载后，再清除本地目录，避免 PV 的实际资源被删除。挂载关系如图所示：
+
+![](assets/pv.drawio.png)
+
+这样，就可以实现一个集群级别的持久化存储。Pod删除或退出后，由于 nfs server 目录仍被持久化保存，可以将 PV 重新绑定到其他 Pod。
+
+### 6.2 GPU
+
+GPU任务的实现参考了k8s中的Job类，Job的配置文件内容包括：Job的名字，gpu具体配置需求，cuda程序位置。实例文件如下:
+
+```yaml
+kind: Job
+metadata:
+  name: gpujob
+spec:
+  partition: dgx2
+  threadNum: 1
+  taskPerNode: 1
+  cpu_per_task: 6
+  gpu-num: 1
+  file: result
+  codePath: /root/tz/localdesk/mini_k8s/scripts/data/add.cu
+```
+
+创建Job的请求到达apiserver后，apiserver会将Job数据存储在etcd中。JobController则监听环境中的Job数量，根据未分配的Job生成对应的脚本，进行文件传输和创建对应的Pod，发送创建Pod的请求到apiserver上，创建的Pod执行sbatch命令，并且返回gpu运算任务的结果，以JobStatus的形式由apiserver存储到etcd中。
+
+![](assets/gpu.png)
+
+需要查看gpu job运行结果，则使用指令：
+
+```
+$ ./bin/kubectl get job jobname
+```
