@@ -1,4 +1,139 @@
+# MiniK8s 验收报告
+
+## 1. 项目总览
+
+项目仓库地址：https://github.com/GMH233/mini_k8s
+
+### 1.1 项目总体架构
+
+MiniK8s项目的实现架构参考了kubernetes的架构，集群中存在唯一的master节点和若干worker节点。apiserver为用户以及其他所有集群组件提供api，集群的配置/状态存放在etcd中，其他集群组件通过apiserver获取所需信息。
+
+<img src="assets/arch.jpg" alt="arch" style="zoom: 67%;" />
+
+### 1.2 项目关键组件简要描述
+
+- kubelet： 监听api-server以在节点上根据要求创建pod，并管理pod生命周期
+
+- kube-proxy： 配置DNS和Service
+- envoy：服务网格的sidecar proxy，劫持流量并基于路由配置进行路由
+
+- pilot：服务网格的控制面组件，实时计算路由配置
+
+- scheduler：负责把pod调度到集群中的不同工作节点上
+- apiserver:  负责各组件之间的信息交互，提供统一的api，实现etcd持久化
+- controller-manager： 负责管理集群内各类资源，如replicaset，hpa等
+
+### 1.3 软件栈及开源库
+
+#### 1.3.1 软件栈
+
+本项目主体使用Golang开发，go语言版本为1.22，Kubernetes参考源码的版本为1.30
+
+Docker对于go语言的支持比较友好，提供了很多api，方便我们获取容器的底层状态。
+
+MiniK8s的api接口基于Kubernetes 1.30，根据实际要求进行了修改。
+
+具体软件栈如下：
+
+| 功能           | 使用组件 |
+| -------------- | -------- |
+| 持久化存储     | etcd     |
+| 容器运行时接口 | docker   |
+| CNI插件        | weave    |
+| dns服务器      | coredns  |
+| 反向代理       | nginx    |
+| 容器性能监控   | cadvisor |
+
+#### 1.3.2 主要开源库
+
+| 功能                     | 地址                                                         |
+| ------------------------ | ------------------------------------------------------------ |
+| APIServer框架            | [github.com/gin-gonic/gin](https://github.com/gin-gonic/gin) |
+| 与docker交互的docker sdk | [github.com/docker/docker](http://www.github.com/docker/docker) |
+| iptables规则管理         | [github.com/](http://www.github.com/coreos/go-iptables)[coreos](http://www.github.com/coreos/go-iptables)[/go-iptables](http://www.github.com/coreos/go-iptables) |
+| ipvs规则管理             | [github.com/](http://www.github.com/moby/ipvs)[moby](http://www.github.com/moby/ipvs)[/](http://www.github.com/moby/ipvs)[ipvs](http://www.github.com/moby/ipvs)[ ](http://www.github.com/moby/ipvs) |
+| 解析终端输入的命令行工具 | [github.com/spf13/cobra](http://www.github.com/spf13/cobra)  |
+| go的yaml文件解析         | [gopkg.in/yaml.v3](https://gopkg.in/yaml.v3)                 |
+| uuid生成                 | [github.com/google/uuid](github.com/google/uuid)             |
+| cAdvisor客户端           | [github.com/google/cadvisor/client/v2](github.com/google/cadvisor/client/v2) |
+| cAdvisor信息格式         | [github.com/google/cadvisor/info/v2](github.com/google/cadvisor/info/v2) |
+| etcd客户端               | [go.etcd.io/etcd/client/v3](go.etcd.io/etcd/client/v3)       |
+| kubeproxy网链            | [github.com/vishvananda/netlink](github.com/vishvananda/netlink) |
+
+## 2. 项目贡献和分工
+
+小组成员如下：
+
+| 姓名   | 学号         | 成员 | 贡献度 |
+| ------ | ------------ | ---- | ------ |
+| 李哲璘 | 521021910874 | 组长 | 32%    |
+| 章程   | 521021910774 | 组员 | 36%    |
+| 唐正   | 521021910768 | 组员 | 32%    |
+
+详细分工：
+
+**李哲璘**：
+
+apiserver框架、apiserver接口管理维护、etcd持久化集成、kubeclient、kubectl主体、controllerManager、部分replicaset、HPA、微服务pilot设计、集群监控、脚本编写、答辩视频录制、答辩视频剪辑、答辩演示、文档编写
+
+**章程**：
+
+kubelet主体、CNI网络插件、service实现、DNS抽象、微服务流量转发、灰度发布、滚动升级、微服务部署、部分scheduler、kubectl架构、CI/CD设计、kubelet多机支持、持久化存储、脚本编写、答辩视频录制、答辩视频剪辑、答辩演示、文档编写
+
+**唐正**：
+
+部分Pod抽象、部分kubelet、replicaset主体、scheduler、微服务pilot实现、GPU部分、文档编写
+
+## 3. 项目管理和开发
+
+### 3.1 分支管理
+
+主要分为三种分支：
+
+- main分支：成品所在的分支
+- dev分支：新功能通过本地测试后，通过PR合并到dev分支，进行CI/CD测试，进行功能合并
+- feature/* 分支：分别开发的功能点分支，相对独立
+
+### 3.2 测试及CI/CD
+
+#### 3.2.1 测试
+
+由于`*_test.go`文件和源码文件处于一个文件夹下，会导致项目文件比较混乱，我们在`./test`文件夹下对主要的组件进行测试。
+
+我们采用开发和测试分离的方式，在本地机器上利用ide的功能进行开发，然后将源码同步到服务器上实际运行和测试。
+
+#### 3.2.2 CI/CD
+
+在服务器上本地测试通过后，我们会将测试通过的分支上传到GitHub。利用GitHub的Workflow，当push到dev分支或者PR到dev分支的时候，会触发CI/CD过程，通过自定义的测试脚本，每次运行前的环境会全部初始化。
+
+对dev分支的更改，只有通过CI/CD测试的才被认为有效。
+
+### 3.3 新功能开发工作流
+
+#### 3.3.1 开发模式
+
+项目的推进采用**API驱动**和**快速迭代开发**相结合的方式。
+
+对于新的功能，我们在进行需求分析之后，进行api对象的设计，然后设计对应的接口，针对接口进行运行逻辑的代码编写。
+
+接口统一使用postman管理，小组成员之间共享接口。
+
+![image-20240611181447671](assets/image-20240611181447671.png)
+
+在所有接口都测试通过之后，我们会编写对应的kubectl逻辑。
+
+迭代方面，我们按照项目迭代计划进行开发，每周末如果有本次迭代相关的问题，当面集中解决，减少返工。
+
+#### 3.3.2 开发节奏
+
+我们的开发基本遵循迭代计划，2周一次迭代。
+
+在每周的周一，周五，周六会集中进行开发，有困难可以现场沟通。
+
+截至第16周答辩前，我们已经完成了全部要求内容，基本符合计划预期。
+
 ## 4. 系统架构和组件功能
+
 ### 4.1 Kubelet
 
 Kubelet运行在每一个工作节点上，主要负责在本节点上Pod的创建和删除，Pod生命周期的监控与管理，Pod状态的回传同步。具体来说，Kubelet几大功能点的实现方式如下：
@@ -48,6 +183,88 @@ Scheduler 是一个控制面组件，负责将未调度的Pod调度到合适的�
 3. Node Affinity：根据 Pod 和 Node 配置文件中的 `label` 字段进行匹配，优先将 Pod 调度到匹配的 Node 上。否则随机匹配。
 
 在本项目中，Pod 与其所属的 Node 的映射关系单独存储在 etcd 中，方便快速查询指定 Node 的所有 Pod。
+
+### 4.5 API Server
+
+API Server是所有api交互的中心，也是控制节点的核心。![apiserver](assets/apiserver.png)
+
+API Server主要负责：
+
+1. 暴露API接口供其他组件使用
+2. 同etcd交互以实现持久化
+3. 接受来自kubelet的pod监控数据
+
+API Server使用Gin框架实现，实现了一系列的Restful API接口，将每个`url+方法`的请求绑定到handler函数上。
+
+handler函数成组出现，主要对以下各种API对象做处理：
+
+- Node的查询，注册和解除注册
+- Pod的增删改查，Pod状态的查询和修改，Pod的调度
+- Service的增删改查
+- DNS的增删改查
+- ReplicaSet的增删改查
+- Pod统计数据的增删查
+- HPA的增删改查
+- VirtualService的增删改查
+- Subset的增删改查
+- SidecarMapping的增删改查
+- RollingUpdate的增删改查
+
+对于集群内的Request Message，我们进行了泛型设计，可以返回不同类型的数据；如果过程中出错，可以在message中夹带具体错误信息。
+
+### 4.6 Controller Manager
+
+Controller对更高级的抽象进行管理，而ControllerManager将各个Controller统一管理。
+
+ControllerManager在启动的时候，会将各个Controller作为子协程启动。
+
+- **ReplicaSetController**：轮询集群中所有ReplicaSet和Pod，根据标签选择器计算可用Pod数量。
+- **HPAController**：对其关联ReplicaSet管理的Pod指标，基于策略计算是否扩缩容
+- **PVController**：轮询集群中的PV和PVC，实现集群级的持久化存储
+- **StatsController**：基于各个node的信息和具有自定义指标的Pod的信息，动态生成Prometheus可读的配置文件。
+
+### 4.7 Kubectl
+
+Kubectl作为MiniK8s的命令行工具，和控制面交互以完成对API对象的查找，部署，删除等功能。
+
+Kubectl使用了Cobra进行命令行操作的美化，提高了命令行解析效率。
+
+<img src="assets/upload_835fc46a324cd6f7e31ac466bac4c99f.png" alt="img" style="zoom:67%;" />
+
+
+
+kubectl支持的命令如下：
+
+**查询**
+
+- `kubectl get [APIObject]    ` ：获取某种类型的全部对象信息
+  - 这里APIObject为了方便起见，单复数形式都可以被接受
+
+**部署**
+
+- `kubectl apply -f /path/to/yaml ` ：根据yaml中的对象解析出相应的类型并部署
+  - 如果解析有错误，会提示marshal错误
+  - 如果部署有错误，会显示从apiserver返回的具体错误信息
+
+**删除**
+
+- `kubectl delete -f /path/to/yaml` ：根据yaml文件中的类型，name和namespace进行删除
+  - 不严格检查yaml格式
+- `kubectl delete [APIObject] [name]`：在namespace = default中删除该名称对应的对象
+- `kubectl delete [APIObject] -p [namespace] -n [name]`：指定namespace和name，删除该对象
+
+**描述**
+
+- `kubectl describe [APIObject] [name]`：在namespace = default 中描述该名称对应的对象
+- `kubectl describe [APIObject] -p [namespace] -n [name]`：指定namespace和name，描述该对象
+  - 更为详细的信息
+  - 可以方便增加输出对象原始json的功能
+
+### 4.8 Kubeclient
+
+Kubeclient作为和API Server交互的功能组件，不暴露给外界，仅仅是集群内的各个组件使用。
+
+需要和API Server交互的组件，都会绑定一个Kubeclient. 因此，Kubeclient具有完备的接口。
 
 ## 5. 功能实现细节
 
@@ -192,9 +409,85 @@ spec:
               protocol: tcp
 ```
 
-创建ReplicaSet的请求到达apiserver后，apiserver会将ReplicaSet数据存储在etcd中。ReplicaSetController则轮询集群中所有ReplicaSet和Pod，根据标签选择器计算可用Pod数量。如果Pod数量超过副本数，则向apiserver发送删除对应pod的请求；如果Pod数量不足，则向apiserver发送增加replicaSet中template的pod请求。
+创建ReplicaSet的请求到达apiserver后，apiserver会将ReplicaSet数据存储在etcd中。ReplicaSetController则轮询集群中所有ReplicaSet和Pod，根据标签选择器计算可用Pod数量。如果Pod数量超过副本数，则向apiserver发送删除对应pod的请求；如果Pod数量不足，则向apiserver发送增加ReplicaSet中template的pod请求。
 
 计算当前Pod数量时，状态为 `Failed` 的Pod将会被忽略。这样，当有 Pod 异常退出时，ReplicaSet也会做出响应，添加新的Pod。
+
+### 5.5 动态扩缩容
+
+此处的扩缩容指的是HorizonalPodAutoscaling，即通过增加某种类型的pod数量来应对资源指标的变化。
+
+HPA是基于ReplicaSet实现的，即当HPAController基于Pod的指标认为Pod数量需要改变的时候，会通过接口改变相对应的ReplicaSet Spec中的replicas数量。
+
+下面简单介绍HPA的api对象字段。
+
+```yaml
+kind: HorizontalPodAutoscaler
+apiVersion: v1
+metadata:
+  name: test-hpa
+spec:
+  scaleTargetRef:
+    kind: ReplicaSet
+    name: nginx-replicaset
+    namespace: default
+  minReplicas: 1
+  maxReplicas: 3
+  scaleWindowSeconds: 20
+  metrics:
+    - name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+        upperThreshold: 80
+        lowerThreshold: 20
+    - name: memory
+      target:
+        type: AverageValue
+        AverageValue: 100
+  behavior:
+    scaleUp:
+      type: Pods
+      value: 1
+      periodSeconds: 60
+    scaleDown:
+      type: Pods
+      value: 1
+      periodSeconds: 60
+```
+
+- spec.scaleTargetRef：和HPA绑定的ReplicaSet
+  - name，namespace：确定了唯一的ReplicaSet
+- minReplicas，maxReplicas：HPA规定的扩缩容上下限
+- scaleWindowSeconds：在同一个窗口期内最多出现一次扩缩容
+- metrics支持对cpu和memory进行统计
+  - target支持两种类型：
+  - Utilization：使用率，有对应的上下界upperThreshold/lowerThreshold
+  - AverageValue：使用量，这里memory对应的单位是MB
+- behavior支持scaleUp和scaleDown
+  - value：一次扩/缩容最多改变多少个Pod
+  - periodSeconds：只考虑这个时间范围内的历史数据，在时间范围外的数据不纳入考量
+
+实现HPA，主要分为三个部分：kubelet集成的cAdvisor采集，上传到控制面并且保存，HPAController从控制面获取历史数据。
+
+![hpa](assets/hpa.png)
+
+kubelet集成的cAdvisor采集需要启动cAdvisor容器，定期检查cAdvisor的可用性以及上传数据。
+
+控制面自行实现了一个简单的TSDB（时序数据存储），超过有效期的数据会被无效化。
+
+HPAController会定期从控制面获取需要的指标源数据，并且根据一定策略决定是否扩缩容。
+
+HPAController的具体流程：
+
+1. 定期依照HPA中含有的ReplicaSet筛选出需要监控的Pod
+2. 以当前时间之前的periodSeconds为时间界限，从控制面获得Pod的历史数据
+3. 计算使用量的平均值
+4. 根据阈值计算判断是否有必要扩缩容
+5. 如果需要扩缩容，和上次成功扩缩容是否在同一个时间窗口内，若在同一个窗口内则不做操作
+6. 默认选择各种策略中使得最终改变量最大的策略
+
+改变ReplicaSet的预期数量后，ReplicaSet会自行管理Pod的增减。
 
 ### 5.6 DNS与转发
 
@@ -471,3 +764,78 @@ spec:
 ```
 $ ./bin/kubectl get job jobname
 ```
+
+### 6.3 集群监控
+
+集群监控功能位于分支 `feature/prometheus`
+
+功能基于prometheus动态读取配置文件来实现。
+
+```yaml
+# my global config
+global:
+  scrape_interval: 10s # Set the scrape interval to every 10 seconds.
+  evaluation_interval: 10s # Evaluate rules every 10 seconds. 
+
+# A scrape configuration containing exactly one endpoint to scrape:
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: "cadvisor"
+    file_sd_configs:
+      - files:
+        - ../../mini_k8s/cmd/stats-controller/test/nodes/*.yml
+        refresh_interval: 10s
+    
+  - job_name: "diy"
+    file_sd_configs:
+      - files:
+        - ../../mini_k8s/cmd/stats-controller/test/pods/*.yml
+        refresh_interval: 10s
+```
+
+指定两个job，会从指定的路径中获取所有的yml文件。yml文件中包含prometheus可以刮削的/metrics路径，格式为
+
+```yaml
+- targets: 
+  - 192.168.1.10:8090
+```
+
+StatsController会定期轮询apiServer，获取其想要的Node和Pod信息，在指定路径生成相关的配置文件。
+
+**针对所有Node的监听**：
+
+只需定期从apiserver中获取所有node的信息，而由于每个node上都有cAdvisor，并且暴露8090端口，所以可以通过cAdvisor的接口获取各个Node的配置信息和负载。
+
+Grafana可以参考原K8s的设计，保证Node能够被某些字段唯一标识即可，这里实现用的是Node Internel IP。
+
+**针对Pod自定义指标的监听：**
+
+使用python程序，需要引入prometheus_client指定自定义指标，暴露相应的metrics端口。
+
+将python脚本打包到python镜像中，设置启动参数和暴露端口，可以通过指定镜像的方式来启动pod。
+
+```yaml
+kind: Pod
+apiVersion: v1
+metadata:
+  name: prome-pod
+  namespace: default
+  labels:
+    app: prome
+    monitor: prometheus
+    monitorPort: "32001"
+spec:
+  containers:
+    - name: container
+      image: lzl-prome:latest
+      ports:
+        - containerPort: 32001
+          protocol: tcp
+```
+
+和监控相关的字段是`labels`中的`monitor`和`monitorPort`，只有`monitor`存在，且`monitor = "prometheus"` 才会监听相关的`monitorPort`.
+
+
+
+
+
