@@ -25,6 +25,7 @@ type Client interface {
 
 	GetAllNodes() ([]*v1.Node, error)
 	AddPodToNode(pod v1.Pod, node v1.Node) error
+	GetPodsByNodeName(nodeName string) ([]*v1.Pod, error)
 
 	GetAllServices() ([]*v1.Service, error)
 	GetService(name, namespace string) (*v1.Service, error)
@@ -320,6 +321,28 @@ func (c *client) AddPodToNode(pod v1.Pod, node v1.Node) error {
 		return fmt.Errorf("add pod to node error: %v", resp.Status)
 	}
 	return nil
+}
+
+func (c *client) GetPodsByNodeName(nodeName string) ([]*v1.Pod, error) {
+	url := fmt.Sprintf("http://%s:8001/api/v1/nodes/%s/pods", c.apiServerIP, nodeName)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var baseResponse v1.BaseResponse[[]*v1.Pod]
+	err = json.Unmarshal(body, &baseResponse)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pods failed, error: %s", baseResponse.Error)
+	}
+	return baseResponse.Data, nil
 }
 
 func (c *client) GetAllServices() ([]*v1.Service, error) {

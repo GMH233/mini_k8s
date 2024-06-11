@@ -18,6 +18,7 @@ spec:
       containers:
         - name: container
           image: python:latest
+          command: ["python", "-m", "http.server", "1024"]
           ports:
             - containerPort: 1024
               protocol: tcp

@@ -1,0 +1,16 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: nginx-pod
+  namespace: default
+  labels:
+    app: nginx
+    monitor: prometheus
+    monitorPort: "32001"
+spec:
+  containers:
+    - name: container
+      image: lzl-prome:latest 
+      ports:
+        - containerPort: 32001
+          protocol: tcp
